@@ -3,22 +3,27 @@ require("dotenv").config();
 const express = require("express");
 const pool = require("./db");
 
+/* Routes & Middleware */
 const employeeRoutes = require("./employee");
 const adminRoutes = require("./admin");
+const authMiddleware = require("./auth");
 const tenantMiddleware = require("./tenant");
-const branding = require("./branding");
+const brandingMiddleware = require("./branding");
 
 const app = express();
 app.use(express.json());
 
-/* 🔍 Log incoming host (keep for now) */
+/* =========================
+   REQUEST LOGGING (TEMP)
+========================= */
 app.use((req, res, next) => {
   console.log("HOST:", req.headers.host);
+  console.log("PATH:", req.path);
   next();
 });
 
 /* =========================
-   HEALTH CHECK (NO TENANT)
+   HEALTH CHECK (PUBLIC)
 ========================= */
 app.get("/", async (req, res) => {
   try {
@@ -30,20 +35,35 @@ app.get("/", async (req, res) => {
 });
 
 /* =========================
-   ADMIN (NO TENANT)
+   AUTH ROUTES (PUBLIC)
 ========================= */
-app.use("/admin", adminRoutes);
+app.use("/api/auth", adminRoutes);
 
 /* =========================
-   TENANT-AWARE ROUTES ONLY
+   ADMIN ROUTES (PROTECTED)
 ========================= */
-app.use(tenantMiddleware);
-app.use(branding);
-app.use("/employee", employeeRoutes);
+app.use("/api/admin", authMiddleware, adminRoutes);
+
+/* =========================
+   TENANT-AWARE ROUTES
+   (CORPORATE / EMPLOYEE)
+========================= */
+app.use(tenantMiddleware);      // resolves tenant from subdomain
+app.use(brandingMiddleware);    // injects tenant branding
+app.use("/api/employee", authMiddleware, employeeRoutes);
+
+/* =========================
+   FALLBACK
+========================= */
+app.use((req, res) => {
+  res.status(404).json({ error: "Route not found" });
+});
 
 /* =========================
    START SERVER
 ========================= */
-app.listen(3000, () => {
-  console.log("Server started on port 3000");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Server started on port ${PORT}`);
 });
