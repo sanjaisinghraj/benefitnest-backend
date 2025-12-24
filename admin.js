@@ -10,11 +10,14 @@ const router = express.Router();
    ADMIN SUBDOMAIN GUARD
 ========================= */
 router.use((req, res, next) => {
-  if (req.method === "OPTIONS") return next();
-
   const host = req.headers.host;
-  if (!host) {
-    return res.status(403).json({ error: "Invalid admin access" });
+
+  // Allow backend domain (Render / localhost)
+  if (
+    host.includes("onrender.com") ||
+    host.includes("localhost")
+  ) {
+    return next();
   }
 
   const subdomain = host.split(":")[0].split(".")[0];
@@ -23,7 +26,6 @@ router.use((req, res, next) => {
     return res.status(403).json({ error: "Admin access only" });
   }
 
-  req.isAdmin = true;
   next();
 });
 

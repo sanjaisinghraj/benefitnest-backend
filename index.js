@@ -1,80 +1,80 @@
 /* =========================
-   LOAD ENV FIRST (CRITICAL)
+   LOAD ENV FIRST
 ========================= */
 require("dotenv").config();
 
 /* =========================
-   INIT DB (AFTER ENV)
-========================= */
-const pool = require("./db");
-
-/* =========================
-   INIT APP
+   IMPORTS
 ========================= */
 const express = require("express");
 const cors = require("cors");
 
+/* =========================
+   INIT APP
+========================= */
 const app = express();
 
 /* =========================
-   GLOBAL MIDDLEWARE
+   CORS (MUST BE FIRST)
 ========================= */
+app.use(
+  cors({
+    origin: [
+      "https://admin.benefitnest.space",
+      "https://www.benefitnest.space"
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+  })
+);
+
+app.options("*", cors());
 app.use(express.json());
 
 /* =========================
-   CORS (MUST BE BEFORE ROUTES)
+   INIT DB
 ========================= */
-const corsOptions = {
-  origin: [
-    "https://admin.benefitnest.space",
-    "https://www.benefitnest.space",
-  ],
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
-
-app.use(cors(corsOptions));
-app.options("*", cors(corsOptions)); // ✅ PRE-FLIGHT FIX
+const pool = require("./db");
 
 /* =========================
-   REQUEST LOGGING (TEMP)
+   ROUTES
 ========================= */
-app.use((req, res, next) => {
-  console.log("METHOD:", req.method);
-  console.log("HOST:", req.headers.host);
-  console.log("PATH:", req.path);
-  next();
-});
-
-/* =========================
-   ROUTES & MIDDLEWARE
-========================= */
-const employeeRoutes = require("./employee");
 const adminRoutes = require("./admin");
+const employeeRoutes = require("./employee");
 const authMiddleware = require("./auth");
 const tenantMiddleware = require("./tenant");
 const brandingMiddleware = require("./branding");
 
 /* =========================
-   HEALTH CHECK (PUBLIC)
+   LOGGING (TEMP)
+========================= */
+app.use((req, res, next) => {
+  console.log("HOST:", req.headers.host);
+  console.log("METHOD:", req.method);
+  console.log("PATH:", req.path);
+  next();
+});
+
+/* =========================
+   HEALTH
 ========================= */
 app.get("/", (req, res) => {
   res.send("Backend is running");
 });
 
 /* =========================
-   AUTH ROUTES (PUBLIC)
+   ADMIN AUTH (PUBLIC)
 ========================= */
-app.use("/api/auth", adminRoutes);
+app.post("/api/admin/login", adminRoutes);
 
 /* =========================
-   ADMIN ROUTES
+   ADMIN PROTECTED
 ========================= */
-app.use("/api/admin", adminRoutes);
+app.use("/api/admin", authMiddleware, adminRoutes);
 
 /* =========================
-   TENANT-AWARE ROUTES
+   TENANT ROUTES
 ========================= */
 app.use(tenantMiddleware);
 app.use(brandingMiddleware);
@@ -88,10 +88,9 @@ app.use((req, res) => {
 });
 
 /* =========================
-   START SERVER
+   START
 ========================= */
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
