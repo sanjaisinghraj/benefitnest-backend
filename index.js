@@ -10,6 +10,9 @@ const pool = require("./db");
 
 const express = require("express");
 
+const cors = require("cors");
+
+
 /* Routes & Middleware */
 const employeeRoutes = require("./employee");
 const adminRoutes = require("./admin");
@@ -45,6 +48,18 @@ app.use("/api/auth", adminRoutes);
    ADMIN ROUTES (PROTECTED)
 ========================= */
 app.use("/api/admin", authMiddleware, adminRoutes);
+
+app.use(
+  cors({
+    origin: [
+      "https://admin.benefitnest.space",
+      "https://www.benefitnest.space"
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+  })
+);
 
 /* =========================
    TENANT-AWARE ROUTES
