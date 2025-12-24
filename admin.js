@@ -30,11 +30,11 @@ router.use((req, res, next) => {
    ADMIN LOGIN
 ========================= */
 router.post("/login", async (req, res) => {
-  const { email, password, rememberMe, captchaToken } = req.body;
+  console.log("ADMIN LOGIN HIT");
+  console.log("HEADERS:", req.headers);
+  console.log("BODY:", req.body);
 
-  if (!email || !password || !captchaToken) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
+  const { email, password, rememberMe, captchaToken } = req.body;
 
   try {
     /* CAPTCHA VERIFY */
@@ -49,20 +49,22 @@ router.post("/login", async (req, res) => {
       }
     );
 
+    console.log("CAPTCHA RESPONSE:", captchaRes.data);
+
     if (!captchaRes.data.success) {
       return res.status(401).json({ error: "Captcha validation failed" });
     }
 
-    /* ADMIN LOOKUP */
     const result = await pool.query(
       `SELECT id, email, password_hash, role, is_active
-       FROM admins
-       WHERE email=$1`,
+       FROM admins WHERE email=$1`,
       [email]
     );
 
-    if (result.rowCount === 0 || !result.rows[0].is_active) {
-      return res.status(401).json({ error: "Invalid credentials" });
+    console.log("DB RESULT:", result.rows);
+
+    if (result.rowCount === 0) {
+      return res.status(401).json({ error: "Admin not found" });
     }
 
     const admin = result.rows[0];
@@ -72,43 +74,25 @@ router.post("/login", async (req, res) => {
       admin.password_hash
     );
 
+    console.log("PASSWORD MATCH:", validPassword);
+
     if (!validPassword) {
-      return res.status(401).json({ error: "Invalid credentials" });
+      return res.status(401).json({ error: "Invalid password" });
     }
 
-    /* JWT */
     const token = jwt.sign(
-      {
-        id: admin.id,
-        email: admin.email,
-        role: admin.role,
-      },
+      { id: admin.id, email: admin.email, role: admin.role },
       process.env.JWT_SECRET,
-      {
-        expiresIn: rememberMe ? "30d" : "1d",
-      }
+      { expiresIn: rememberMe ? "30d" : "1d" }
     );
 
-    /* AUDIT LOG */
-    await pool.query(
-      `INSERT INTO audit_logs (admin_id, action)
-       VALUES ($1, 'LOGIN')`,
-      [admin.id]
-    );
-
-    res.json({
-      token,
-      admin: {
-        id: admin.id,
-        email: admin.email,
-        role: admin.role,
-      },
-    });
+    res.json({ token });
   } catch (err) {
-    console.error(err);
+    console.error("LOGIN ERROR:", err);
     res.status(500).json({ error: "Admin login failed" });
   }
 });
+
 
 /* =========================
    CREATE CORPORATE
