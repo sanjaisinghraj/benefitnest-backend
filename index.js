@@ -15,17 +15,15 @@ const cors = require("cors");
 const app = express();
 
 /* =========================
-   CORS (MUST BE FIRST)
+   CORS (FIRST)
 ========================= */
 app.use(
   cors({
     origin: [
       "https://admin.benefitnest.space",
-      "https://www.benefitnest.space"
+      "https://www.benefitnest.space",
     ],
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
   })
 );
 
@@ -35,22 +33,23 @@ app.use(express.json());
 /* =========================
    INIT DB
 ========================= */
-const pool = require("./db");
+require("./db");
 
 /* =========================
    ROUTES
 ========================= */
-const adminRoutes = require("./admin");
+const adminPublicRoutes = require("./admin.public");
+const adminProtectedRoutes = require("./admin.protected");
 const employeeRoutes = require("./employee");
+
 const authMiddleware = require("./auth");
 const tenantMiddleware = require("./tenant");
 const brandingMiddleware = require("./branding");
 
 /* =========================
-   LOGGING (TEMP)
+   LOGGING
 ========================= */
 app.use((req, res, next) => {
-  console.log("HOST:", req.headers.host);
   console.log("METHOD:", req.method);
   console.log("PATH:", req.path);
   next();
@@ -64,17 +63,17 @@ app.get("/", (req, res) => {
 });
 
 /* =========================
-   ADMIN AUTH (PUBLIC)
+   ADMIN LOGIN (PUBLIC)
 ========================= */
-app.post("/api/admin/login", adminRoutes);
+app.use("/api/admin", adminPublicRoutes);
 
 /* =========================
    ADMIN PROTECTED
 ========================= */
-app.use("/api/admin", authMiddleware, adminRoutes);
+app.use("/api/admin", authMiddleware, adminProtectedRoutes);
 
 /* =========================
-   TENANT ROUTES
+   TENANT / EMPLOYEE
 ========================= */
 app.use(tenantMiddleware);
 app.use(brandingMiddleware);
@@ -90,7 +89,7 @@ app.use((req, res) => {
 /* =========================
    START
 ========================= */
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
