@@ -2,49 +2,55 @@ const pool = require("./db");
 
 module.exports = async function tenantMiddleware(req, res, next) {
   try {
-    /* Example hosts:
-       admin.localhost:3000
-       democorp.localhost:3000
-       benefitnest.space
-       admin.benefitnest.space
-    */
+    /* ======================================
+       DEV MODE BYPASS (LOCAL ONLY)
+       DO NOT REMOVE
+    ====================================== */
+    if (process.env.NODE_ENV !== "production") {
+      req.isAdmin = true;
+      req.tenant = null;
+      return next();
+    }
+
+    /* ======================================
+       PRODUCTION TENANT LOGIC
+    ====================================== */
+
     const hostHeader = req.headers.host;
-    if (!hostHeader) return next();
+    if (!hostHeader) {
+      return res.status(400).json({ error: "Host header missing" });
+    }
 
-    /* Remove port if present */
     const hostname = hostHeader.split(":")[0];
-
-    /* Extract subdomain safely */
     const parts = hostname.split(".");
-    const subdomain = parts.length > 2 ? parts[0] : null;
+    const subdomain = parts.length > 2 ? parts[0].toLowerCase() : null;
 
-    /* =========================
-       ADMIN TENANT
-    ========================= */
+    /* ADMIN TENANT */
     if (subdomain === "admin") {
       req.isAdmin = true;
       return next();
     }
 
-    /* =========================
-       CORPORATE TENANT
-    ========================= */
+    /* CORPORATE REQUIRED */
     if (!subdomain) {
       return res
         .status(400)
         .json({ error: "Corporate subdomain missing" });
     }
 
+    /* FETCH TENANT */
     const result = await pool.query(
-      `SELECT
-         id,
-         name,
-         subdomain,
-         allowed_login_methods,
-         branding_config
-       FROM corporates
-       WHERE subdomain = $1 AND is_active = true`,
-      [subdomain.toLowerCase()]
+      `
+      SELECT
+        tenant_id,
+        corporate_legal_name,
+        subdomain,
+        branding_config,
+        status
+      FROM tenants
+      WHERE subdomain = $1 AND status = 'ACTIVE'
+      `,
+      [subdomain]
     );
 
     if (result.rows.length === 0) {
@@ -53,13 +59,12 @@ module.exports = async function tenantMiddleware(req, res, next) {
         .json({ error: "Invalid or inactive tenant" });
     }
 
-    /* Attach tenant context */
     req.tenant = result.rows[0];
     req.isAdmin = false;
 
     next();
   } catch (err) {
-    console.error("Tenant middleware error:", err);
+    console.error("Tenant middleware error:", err.message);
     res.status(500).json({ error: "Tenant resolution failed" });
   }
 };

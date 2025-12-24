@@ -1,7 +1,14 @@
+/* =========================
+   LOAD ENV FIRST (CRITICAL)
+========================= */
 require("dotenv").config();
 
-const express = require("express");
+/* =========================
+   INIT DB (AFTER ENV)
+========================= */
 const pool = require("./db");
+
+const express = require("express");
 
 /* Routes & Middleware */
 const employeeRoutes = require("./employee");
@@ -25,13 +32,8 @@ app.use((req, res, next) => {
 /* =========================
    HEALTH CHECK (PUBLIC)
 ========================= */
-app.get("/", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
-    res.send("Backend + Database connected");
-  } catch (err) {
-    res.status(500).send("Database connection failed");
-  }
+app.get("/", (req, res) => {
+  res.send("Backend is running");
 });
 
 /* =========================
@@ -46,10 +48,9 @@ app.use("/api/admin", authMiddleware, adminRoutes);
 
 /* =========================
    TENANT-AWARE ROUTES
-   (CORPORATE / EMPLOYEE)
 ========================= */
-app.use(tenantMiddleware);      // resolves tenant from subdomain
-app.use(brandingMiddleware);    // injects tenant branding
+app.use(tenantMiddleware);
+app.use(brandingMiddleware);
 app.use("/api/employee", authMiddleware, employeeRoutes);
 
 /* =========================

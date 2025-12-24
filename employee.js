@@ -3,6 +3,7 @@ const pool = require("./db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const auth = require("./auth");
+const corporateOnly = require("./middlewares/corporateOnly");
 
 const {
   hashPassword,
@@ -14,22 +15,14 @@ const {
 const router = express.Router();
 
 /* =========================
-   TENANT GUARD (MANDATORY)
-========================= */
-router.use((req, res, next) => {
-  if (!req.tenant) {
-    return res.status(403).json({ error: "Corporate access only" });
-  }
-  req.corporateId = req.tenant.id;
-  next();
-});
-
-/* =========================
    EMPLOYEE SIGNUP
 ========================= */
-router.post("/signup", async (req, res) => {
+router.post("/signup", corporateOnly, async (req, res) => {
   const { loginId, password, consent } = req.body;
-  const corporateId = req.corporateId;
+
+  // In prod, tenant exists; in dev, bypass sets no tenant
+  const corporateId = req.tenant ? req.tenant.tenant_id : null;
+
 
   if (!loginId || !password || consent !== true) {
     return res
@@ -44,7 +37,6 @@ router.post("/signup", async (req, res) => {
   try {
     const loginEnc = encrypt(loginId);
 
-    /* Prevent duplicate signup */
     const existing = await pool.query(
       `SELECT 1 FROM employees
        WHERE corporate_id = $1 AND login_id_enc = $2`,
@@ -74,9 +66,10 @@ router.post("/signup", async (req, res) => {
 /* =========================
    EMPLOYEE LOGIN
 ========================= */
-router.post("/login", async (req, res) => {
+router.post("/login", corporateOnly, async (req, res) => {
   const { loginId, password, consent } = req.body;
-  const corporateId = req.corporateId;
+  const corporateId = req.tenant ? req.tenant.tenant_id : null;
+
 
   if (!loginId || !password || consent !== true) {
     return res
@@ -91,22 +84,27 @@ router.post("/login", async (req, res) => {
       [corporateId]
     );
 
-    const employee = result.rows.find(e => decrypt(e.login_id_enc) === loginId);
+    const employee = result.rows.find(
+      e => decrypt(e.login_id_enc) === loginId
+    );
 
     if (!employee) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const isMatch = await bcrypt.compare(password, employee.password_hash);
+    const isMatch = await bcrypt.compare(
+      password,
+      employee.password_hash
+    );
+
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    /* ISSUE JWT */
     const token = jwt.sign(
       {
         employeeId: employee.id,
-        corporateId: corporateId
+        corporateId
       },
       process.env.JWT_SECRET,
       { expiresIn: "1h" }
@@ -126,9 +124,10 @@ router.post("/login", async (req, res) => {
 /* =========================
    FORGOT PASSWORD (OTP)
 ========================= */
-router.post("/forgot-password", async (req, res) => {
+router.post("/forgot-password", corporateOnly, async (req, res) => {
   const { loginId } = req.body;
-  const corporateId = req.corporateId;
+  const corporateId = req.tenant ? req.tenant.id : null;
+
 
   if (!loginId) {
     return res.status(400).json({ error: "Login ID required" });
@@ -140,7 +139,10 @@ router.post("/forgot-password", async (req, res) => {
     [corporateId]
   );
 
-  const employee = result.rows.find(e => decrypt(e.login_id_enc) === loginId);
+  const employee = result.rows.find(
+    e => decrypt(e.login_id_enc) === loginId
+  );
+
   if (!employee) {
     return res.json({ message: "If account exists, OTP sent" });
   }
@@ -162,9 +164,10 @@ router.post("/forgot-password", async (req, res) => {
 /* =========================
    RESET PASSWORD
 ========================= */
-router.post("/reset-password", async (req, res) => {
+router.post("/reset-password", corporateOnly, async (req, res) => {
   const { loginId, otp, newPassword } = req.body;
-  const corporateId = req.corporateId;
+  const corporateId = req.tenant ? req.tenant.id : null;
+
 
   if (!loginId || !otp || !newPassword) {
     return res.status(400).json({ error: "Missing fields" });
@@ -180,7 +183,10 @@ router.post("/reset-password", async (req, res) => {
     [corporateId]
   );
 
-  const employee = result.rows.find(e => decrypt(e.login_id_enc) === loginId);
+  const employee = result.rows.find(
+    e => decrypt(e.login_id_enc) === loginId
+  );
+
   if (
     !employee ||
     !employee.reset_otp ||
@@ -223,7 +229,7 @@ router.get("/branding", (req, res) => {
 });
 
 /* =========================
-   LOGOUT (STATELESS)
+   LOGOUT
 ========================= */
 router.post("/logout", (req, res) => {
   res.json({ message: "Logged out successfully" });
