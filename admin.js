@@ -10,20 +10,21 @@ const router = express.Router();
    ADMIN SUBDOMAIN GUARD
 ========================= */
 router.use((req, res, next) => {
-  const host = req.headers.host;
-  if (!host) {
-    return res.status(403).json({ error: "Invalid admin access" });
+  const origin = req.headers.origin || "";
+
+  // Allow backend service domain
+  if (origin.includes("admin.benefitnest.space")) {
+    return next();
   }
 
-  const subdomain = host.split(":")[0].split(".")[0];
-
-  if (subdomain !== "admin") {
-    return res.status(403).json({ error: "Admin access only" });
+  // Allow localhost for dev
+  if (origin.includes("localhost")) {
+    return next();
   }
 
-  req.isAdmin = true;
-  next();
+  return res.status(403).json({ error: "Admin access only" });
 });
+
 
 /* =========================
    ADMIN LOGIN
