@@ -1,3 +1,6 @@
+/* =========================
+   POSTGRESQL POOL
+========================= */
 const { Pool } = require("pg");
 
 const pool = new Pool(
@@ -17,7 +20,7 @@ const pool = new Pool(
 );
 
 pool.on("connect", () => {
-  console.log("Database connected");
+  console.log("✅ Database connected");
 });
 
 pool.on("error", (err) => {
@@ -25,4 +28,20 @@ pool.on("error", (err) => {
   process.exit(1);
 });
 
-module.exports = pool;
+/* =========================
+   SUPABASE CLIENT
+========================= */
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
+
+console.log('✅ Supabase client initialized');
+
+/* =========================
+   EXPORTS
+========================= */
+module.exports = pool;  // Default export (for compatibility with existing code)
+module.exports.supabase = supabase;  // Named export for admin routes
