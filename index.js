@@ -15,17 +15,19 @@ const cors = require("cors");
 const app = express();
 
 /* =========================
-   CORS (FIRST)
+   CORS (MUST BE FIRST)
 ========================= */
 app.use(
   cors({
     origin: [
       "https://admin.benefitnest.space",
-      "https://www.benefitnest.space",
-      "http://localhost:3000", // For local development
-      "http://localhost:5173", // For Vite
+      "https://benefitnest.space",
+      "http://localhost:3000",
+      "http://localhost:5173",
     ],
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
@@ -42,8 +44,8 @@ require("./db");
 ========================= */
 const adminPublicRoutes = require("./admin.public");
 const adminProtectedRoutes = require("./admin.protected");
+const corporatesRoutes = require("./corporates.routes");
 const employeeRoutes = require("./employee");
-const corporatesRoutes = require("./corporates.routes"); // NEW
 
 const authMiddleware = require("./auth");
 const tenantMiddleware = require("./tenant");
@@ -71,44 +73,9 @@ app.get("/", (req, res) => {
 app.use("/api/admin", adminPublicRoutes);
 
 /* =========================
-   TEST ENDPOINT (NO AUTH) - Place before auth middleware
-========================= */
-app.get("/api/admin/corporates/test", async (req, res) => {
-  const { createClient } = require('@supabase/supabase-js');
-  const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_KEY
-  );
-  
-  try {
-    const { data, error } = await supabase
-      .from('tenants')
-      .select('*')
-      .limit(5);
-
-    res.json({
-      success: true,
-      message: 'Backend is working! No auth required.',
-      data: data,
-      count: data?.length || 0,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-/* =========================
    ADMIN PROTECTED ROUTES
 ========================= */
 app.use("/api/admin", authMiddleware, adminProtectedRoutes);
-
-/* =========================
-   CORPORATES MANAGEMENT (NEW)
-========================= */
 app.use("/api/admin", authMiddleware, corporatesRoutes);
 
 /* =========================
