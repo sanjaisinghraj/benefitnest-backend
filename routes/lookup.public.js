@@ -1,15 +1,14 @@
 // =====================================================
 // LOOKUP TABLES API - /api/lookup
-// Add this to your backend routes
+// File: routes/lookup.public.js
 // =====================================================
 
 const express = require('express');
 const router = express.Router();
-const supabase = require('../config/supabase'); // Adjust path as needed
+const { supabase } = require('../db');
 
 // =====================================================
 // GET /api/lookup/corporate-types
-// Fetch all active corporate types
 // =====================================================
 router.get('/corporate-types', async (req, res) => {
     try {
@@ -22,31 +21,18 @@ router.get('/corporate-types', async (req, res) => {
 
         if (error) {
             console.error('Error fetching corporate types:', error);
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to fetch corporate types',
-                error: error.message
-            });
+            return res.status(500).json({ success: false, message: 'Failed to fetch corporate types', error: error.message });
         }
 
-        res.json({
-            success: true,
-            data: data || [],
-            count: data?.length || 0
-        });
+        res.json({ success: true, data: data || [], count: data?.length || 0 });
     } catch (error) {
         console.error('Error in corporate-types endpoint:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
     }
 });
 
 // =====================================================
 // GET /api/lookup/industry-types
-// Fetch all active industry types
 // =====================================================
 router.get('/industry-types', async (req, res) => {
     try {
@@ -59,31 +45,18 @@ router.get('/industry-types', async (req, res) => {
 
         if (error) {
             console.error('Error fetching industry types:', error);
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to fetch industry types',
-                error: error.message
-            });
+            return res.status(500).json({ success: false, message: 'Failed to fetch industry types', error: error.message });
         }
 
-        res.json({
-            success: true,
-            data: data || [],
-            count: data?.length || 0
-        });
+        res.json({ success: true, data: data || [], count: data?.length || 0 });
     } catch (error) {
         console.error('Error in industry-types endpoint:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
     }
 });
 
 // =====================================================
 // GET /api/lookup/job-levels
-// Fetch all active job levels
 // =====================================================
 router.get('/job-levels', async (req, res) => {
     try {
@@ -96,31 +69,19 @@ router.get('/job-levels', async (req, res) => {
 
         if (error) {
             console.error('Error fetching job levels:', error);
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to fetch job levels',
-                error: error.message
-            });
+            return res.status(500).json({ success: false, message: 'Failed to fetch job levels', error: error.message });
         }
 
-        res.json({
-            success: true,
-            data: data || [],
-            count: data?.length || 0
-        });
+        res.json({ success: true, data: data || [], count: data?.length || 0 });
     } catch (error) {
         console.error('Error in job-levels endpoint:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
     }
 });
 
 // =====================================================
 // GET /api/lookup/all
-// Fetch all lookup data in one call (for initial load)
+// Fetch all lookup data in one call
 // =====================================================
 router.get('/all', async (req, res) => {
     try {
@@ -167,11 +128,7 @@ router.get('/all', async (req, res) => {
         });
     } catch (error) {
         console.error('Error in lookup/all endpoint:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Internal server error',
-            error: error.message
-        });
+        res.status(500).json({ success: false, message: 'Internal server error', error: error.message });
     }
 });
 
