@@ -10,9 +10,7 @@ const express = require("express");
 const cors = require("cors");
 
 
-// Add this with your other routes
-const lookupRoutes = require('./routes/lookup.public');
-app.use('/api/lookup', lookupRoutes);
+
 /* =========================
    INIT APP
 ========================= */
@@ -65,6 +63,11 @@ require("./db");
 /* =========================
    ROUTES
 ========================= */
+
+const lookupRoutes = require('./routes/lookup.public');
+app.use('/api/lookup', lookupRoutes);
+
+
 const adminPublicRoutes = require("./admin.public");
 const adminProtectedRoutes = require("./admin.protected");
 const employeeRoutes = require("./employee");
