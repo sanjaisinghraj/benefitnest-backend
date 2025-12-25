@@ -22,6 +22,8 @@ app.use(
     origin: [
       "https://admin.benefitnest.space",
       "https://www.benefitnest.space",
+      "http://localhost:3000", // For local development
+      "http://localhost:5173", // For Vite
     ],
     credentials: true,
   })
@@ -41,6 +43,7 @@ require("./db");
 const adminPublicRoutes = require("./admin.public");
 const adminProtectedRoutes = require("./admin.protected");
 const employeeRoutes = require("./employee");
+const corporatesRoutes = require("./corporates.routes"); // NEW
 
 const authMiddleware = require("./auth");
 const tenantMiddleware = require("./tenant");
@@ -68,9 +71,14 @@ app.get("/", (req, res) => {
 app.use("/api/admin", adminPublicRoutes);
 
 /* =========================
-   ADMIN PROTECTED
+   ADMIN PROTECTED ROUTES
 ========================= */
 app.use("/api/admin", authMiddleware, adminProtectedRoutes);
+
+/* =========================
+   CORPORATES MANAGEMENT (NEW)
+========================= */
+app.use("/api/admin", authMiddleware, corporatesRoutes);
 
 /* =========================
    TENANT / EMPLOYEE
