@@ -28,10 +28,14 @@ function checkRateLimit(email) {
 // Admin Login - PUBLIC ROUTE (reCAPTCHA DISABLED for testing)
 router.post('/login', async (req, res) => {
   try {
+    console.log('=== ADMIN LOGIN ATTEMPT ===');
+    console.log('Request body:', { email: req.body.email, hasPassword: !!req.body.password });
+    
     const { email, password } = req.body;
 
     // Validate input
     if (!email || !password) {
+      console.log('Missing email or password');
       return res.status(400).json({ 
         success: false, 
         message: 'Email and password are required' 
@@ -40,66 +44,46 @@ router.post('/login', async (req, res) => {
 
     // Simple rate limiting check
     if (!checkRateLimit(email)) {
+      console.log('Rate limit exceeded for:', email);
       return res.status(429).json({
         success: false,
         message: 'Too many login attempts, please try again later.'
       });
     }
 
-    // ==========================================
-    // reCAPTCHA VERIFICATION DISABLED FOR TESTING
-    // ==========================================
-    // UNCOMMENT THE SECTION BELOW TO RE-ENABLE:
-    /*
-    const { recaptchaToken } = req.body;
-    
-    if (!recaptchaToken) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'reCAPTCHA token is required' 
-      });
-    }
-
-    // Verify reCAPTCHA
-    const recaptchaSecret = process.env.RECAPTCHA_SECRET_KEY;
-    const recaptchaResponse = await fetch(
-      `https://www.google.com/recaptcha/api/siteverify`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `secret=${recaptchaSecret}&response=${recaptchaToken}`,
-      }
-    );
-
-    const recaptchaData = await recaptchaResponse.json();
-
-    if (!recaptchaData.success || recaptchaData.score < 0.5) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'reCAPTCHA verification failed' 
-      });
-    }
-    */
-    // ==========================================
+    // reCAPTCHA DISABLED FOR TESTING
+    console.log('Skipping reCAPTCHA verification (disabled for testing)');
 
     // Find admin user
+    console.log('Searching for admin with email:', email.toLowerCase());
     const { data: admin, error } = await supabase
       .from('admins')
       .select('*')
       .eq('email', email.toLowerCase())
       .single();
 
-    if (error || !admin) {
+    if (error) {
+      console.error('Supabase error:', error);
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid credentials',
+        debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+
+    if (!admin) {
+      console.log('No admin found with email:', email);
       return res.status(401).json({ 
         success: false, 
         message: 'Invalid credentials' 
       });
     }
 
+    console.log('Admin found:', { id: admin.id, email: admin.email, is_active: admin.is_active });
+
     // Check if account is active
     if (!admin.is_active) {
+      console.log('Admin account is deactivated');
       return res.status(403).json({ 
         success: false, 
         message: 'Account is deactivated' 
@@ -107,9 +91,12 @@ router.post('/login', async (req, res) => {
     }
 
     // Verify password
+    console.log('Verifying password...');
     const isPasswordValid = await bcrypt.compare(password, admin.password_hash);
+    console.log('Password valid:', isPasswordValid);
 
     if (!isPasswordValid) {
+      console.log('Invalid password for:', email);
       return res.status(401).json({ 
         success: false, 
         message: 'Invalid credentials' 
@@ -117,12 +104,22 @@ router.post('/login', async (req, res) => {
     }
 
     // Update last login
+    console.log('Updating last login time...');
     await supabase
       .from('admins')
       .update({ last_login: new Date().toISOString() })
       .eq('id', admin.id);
 
     // Generate JWT token
+    console.log('Generating JWT token...');
+    if (!process.env.JWT_SECRET) {
+      console.error('JWT_SECRET environment variable is not set!');
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Server configuration error' 
+      });
+    }
+
     const token = jwt.sign(
       { 
         id: admin.id, 
@@ -133,6 +130,7 @@ router.post('/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    console.log('Login successful for:', email);
     res.json({
       success: true,
       message: 'Login successful',
@@ -148,10 +146,13 @@ router.post('/login', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Admin login error:', error);
+    console.error('=== ADMIN LOGIN ERROR ===');
+    console.error('Error details:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       success: false, 
-      message: 'Server error during login' 
+      message: 'Server error during login',
+      debug: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
