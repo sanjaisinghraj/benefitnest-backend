@@ -4,8 +4,12 @@ const jwt = require("jsonwebtoken");
 const router = express.Router();
 
 router.use((req, res, next) => {
-  const authHeader = req.headers.authorization;
+  // ✅ allow CORS preflight
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
 
+  const authHeader = req.headers.authorization;
   if (!authHeader) {
     return res.status(401).json({ error: "Missing token" });
   }
@@ -15,7 +19,7 @@ router.use((req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    if (!decoded || !decoded.role || !decoded.role.includes("admin")) {
+    if (!decoded?.role || !decoded.role.toLowerCase().includes("admin")) {
       return res.status(403).json({ error: "Admin access only" });
     }
 
