@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { supabase } = require('../config/supabase');
+const { supabase } = require('./db');
 const rateLimit = require('express-rate-limit');
 
 // Rate limiting for login attempts
