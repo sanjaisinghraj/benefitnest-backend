@@ -131,9 +131,12 @@ router.post('/login', async (req, res) => {
     );
 
     console.log('Login successful for:', email);
+    
+    // IMPORTANT: Return token at root level for frontend compatibility
     res.json({
       success: true,
       message: 'Login successful',
+      token: token,  // Token at root level for frontend
       data: {
         token,
         admin: {
