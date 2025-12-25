@@ -1,65 +1,184 @@
-const express = require("express");
-const pool = require("./db");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const axios = require("axios");
-
+const express = require('express');
 const router = express.Router();
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { supabase } = require('../config/supabase');
+const rateLimit = require('express-rate-limit');
 
-/* =========================
-   ADMIN LOGIN (PUBLIC)
-========================= */
-router.post("/login", async (req, res) => {
-  const { email, password, rememberMe, captchaToken } = req.body;
+// Rate limiting for login attempts
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts
+  message: 'Too many login attempts, please try again later.'
+});
 
-  if (!email || !password || !captchaToken) {
-    return res.status(400).json({ error: "Missing fields" });
-  }
-
+// Admin Login - PUBLIC ROUTE (reCAPTCHA DISABLED for testing)
+router.post('/login', loginLimiter, async (req, res) => {
   try {
-    // CAPTCHA
-    const captchaRes = await axios.post(
-      "https://www.google.com/recaptcha/api/siteverify",
-      null,
+    const { email, password } = req.body;
+
+    // Validate input
+    if (!email || !password) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email and password are required' 
+      });
+    }
+
+    // ==========================================
+    // reCAPTCHA VERIFICATION DISABLED FOR TESTING
+    // ==========================================
+    // UNCOMMENT THE SECTION BELOW TO RE-ENABLE:
+    /*
+    const { recaptchaToken } = req.body;
+    
+    if (!recaptchaToken) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'reCAPTCHA token is required' 
+      });
+    }
+
+    // Verify reCAPTCHA
+    const recaptchaSecret = process.env.RECAPTCHA_SECRET_KEY;
+    const recaptchaResponse = await fetch(
+      `https://www.google.com/recaptcha/api/siteverify`,
       {
-        params: {
-          secret: process.env.RECAPTCHA_SECRET_KEY,
-          response: captchaToken,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
         },
+        body: `secret=${recaptchaSecret}&response=${recaptchaToken}`,
       }
     );
 
-    if (!captchaRes.data.success) {
-      return res.status(401).json({ error: "Captcha failed" });
+    const recaptchaData = await recaptchaResponse.json();
+
+    if (!recaptchaData.success || recaptchaData.score < 0.5) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'reCAPTCHA verification failed' 
+      });
+    }
+    */
+    // ==========================================
+
+    // Find admin user
+    const { data: admin, error } = await supabase
+      .from('admins')
+      .select('*')
+      .eq('email', email.toLowerCase())
+      .single();
+
+    if (error || !admin) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid credentials' 
+      });
     }
 
-    const result = await pool.query(
-      `SELECT id, email, password_hash, role, is_active
-       FROM admins WHERE email=$1`,
-      [email]
-    );
-
-    if (result.rowCount === 0 || !result.rows[0].is_active) {
-      return res.status(401).json({ error: "Invalid credentials" });
+    // Check if account is active
+    if (!admin.is_active) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Account is deactivated' 
+      });
     }
 
-    const admin = result.rows[0];
-    const valid = await bcrypt.compare(password, admin.password_hash);
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, admin.password_hash);
 
-    if (!valid) {
-      return res.status(401).json({ error: "Invalid credentials" });
+    if (!isPasswordValid) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid credentials' 
+      });
     }
 
+    // Update last login
+    await supabase
+      .from('admins')
+      .update({ last_login: new Date().toISOString() })
+      .eq('id', admin.id);
+
+    // Generate JWT token
     const token = jwt.sign(
-      { id: admin.id, role: admin.role },
+      { 
+        id: admin.id, 
+        email: admin.email,
+        role: admin.role 
+      },
       process.env.JWT_SECRET,
-      { expiresIn: rememberMe ? "30d" : "1d" }
+      { expiresIn: '24h' }
     );
 
-    res.json({ token });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Login failed" });
+    res.json({
+      success: true,
+      message: 'Login successful',
+      data: {
+        token,
+        admin: {
+          id: admin.id,
+          email: admin.email,
+          name: admin.name,
+          role: admin.role
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Admin login error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error during login' 
+    });
+  }
+});
+
+// Check authentication status
+router.get('/check', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'No token provided' 
+      });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const { data: admin, error } = await supabase
+      .from('admins')
+      .select('id, email, name, role, is_active')
+      .eq('id', decoded.id)
+      .single();
+
+    if (error || !admin || !admin.is_active) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid token' 
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        admin: {
+          id: admin.id,
+          email: admin.email,
+          name: admin.name,
+          role: admin.role
+        }
+      }
+    });
+
+  } catch (error) {
+    res.status(401).json({ 
+      success: false, 
+      message: 'Invalid or expired token' 
+    });
   }
 });
 
