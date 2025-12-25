@@ -1,30 +1,29 @@
 const express = require("express");
-const pool = require("./db");
+const jwt = require("jsonwebtoken");
 
 const router = express.Router();
 
-/* =========================
-   ADMIN SUBDOMAIN GUARD
-   (TEMP TEST BYPASS ENABLED)
-========================= */
 router.use((req, res, next) => {
-  // ✅ TEMP: allow testing without admin subdomain
-  if (process.env.ALLOW_ADMIN_TEST === "true") {
-    return next();
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({ error: "Missing token" });
   }
 
-  const host = req.headers.host?.split(":")[0];
-  if (!host || !host.startsWith("admin.")) {
-    return res.status(403).json({ error: "Admin access only" });
-  }
-  next();
-});
+  const token = authHeader.split(" ")[1];
 
-/* =========================
-   EXAMPLE PROTECTED ROUTE
-========================= */
-router.get("/dashboard", (req, res) => {
-  res.json({ message: "Welcome Admin" });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (!decoded || !decoded.role || !decoded.role.includes("admin")) {
+      return res.status(403).json({ error: "Admin access only" });
+    }
+
+    req.admin = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
 });
 
 module.exports = router;
