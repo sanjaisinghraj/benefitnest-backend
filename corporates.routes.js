@@ -3,6 +3,30 @@ const router = express.Router();
 const { supabase } = require('./db');
 
 /* =========================
+   TEST ENDPOINT (NO AUTH) - Remove after testing
+========================= */
+router.get('/corporates/test', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('tenants')
+      .select('*')
+      .limit(5);
+
+    res.json({
+      success: true,
+      message: 'Backend is working!',
+      data: data,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+/* =========================
    GET ALL CORPORATES/TENANTS
 ========================= */
 router.get('/corporates', async (req, res) => {
