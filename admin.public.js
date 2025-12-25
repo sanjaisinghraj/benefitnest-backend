@@ -3,17 +3,30 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { supabase } = require('./db');
-const rateLimit = require('express-rate-limit');
 
-// Rate limiting for login attempts
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts
-  message: 'Too many login attempts, please try again later.'
-});
+// Simple in-memory rate limiting (temporary - for production, use express-rate-limit)
+const loginAttempts = new Map();
+
+function checkRateLimit(email) {
+  const now = Date.now();
+  const attempts = loginAttempts.get(email) || { count: 0, resetTime: now + 15 * 60 * 1000 };
+  
+  if (now > attempts.resetTime) {
+    loginAttempts.set(email, { count: 1, resetTime: now + 15 * 60 * 1000 });
+    return true;
+  }
+  
+  if (attempts.count >= 5) {
+    return false;
+  }
+  
+  attempts.count++;
+  loginAttempts.set(email, attempts);
+  return true;
+}
 
 // Admin Login - PUBLIC ROUTE (reCAPTCHA DISABLED for testing)
-router.post('/login', loginLimiter, async (req, res) => {
+router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -22,6 +35,14 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(400).json({ 
         success: false, 
         message: 'Email and password are required' 
+      });
+    }
+
+    // Simple rate limiting check
+    if (!checkRateLimit(email)) {
+      return res.status(429).json({
+        success: false,
+        message: 'Too many login attempts, please try again later.'
       });
     }
 
