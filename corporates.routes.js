@@ -11,43 +11,9 @@ const supabase = createClient(
 );
 
 /* =========================
-   AUTHENTICATION MIDDLEWARE
-========================= */
-const authenticateAdmin = (req, res, next) => {
-  // Skip auth check for testing (you can remove this later)
-  console.log('Auth middleware: Skipping token check for development');
-  next();
-  return;
-  
-  /* Uncomment this when you want to enable auth:
-  const authHeader = req.headers.authorization;
-  
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({
-      success: false,
-      message: 'No authorization token provided'
-    });
-  }
-  
-  const token = authHeader.split(' ')[1];
-  
-  // Verify token here (add your JWT verification logic)
-  // For now, just accept any token
-  if (token) {
-    next();
-  } else {
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid token'
-    });
-  }
-  */
-};
-
-/* =========================
    GET ALL CORPORATES/TENANTS
 ========================= */
-router.get('/corporates', authenticateAdmin, async (req, res) => {
+router.get('/corporates', async (req, res) => {
   try {
     console.log('Fetching all corporates...');
     
@@ -86,7 +52,7 @@ router.get('/corporates', authenticateAdmin, async (req, res) => {
 /* =========================
    GET SINGLE CORPORATE
 ========================= */
-router.get('/corporates/:id', authenticateAdmin, async (req, res) => {
+router.get('/corporates/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -124,7 +90,7 @@ router.get('/corporates/:id', authenticateAdmin, async (req, res) => {
 /* =========================
    CREATE CORPORATE
 ========================= */
-router.post('/corporates', authenticateAdmin, async (req, res) => {
+router.post('/corporates', async (req, res) => {
   try {
     console.log('Creating corporate:', req.body);
     
@@ -137,8 +103,7 @@ router.post('/corporates', authenticateAdmin, async (req, res) => {
       industry_type,
       address,
       contact_details,
-      benefitnest_manager,
-      branding_config
+      benefitnest_manager
     } = req.body;
 
     // Validation
@@ -165,7 +130,6 @@ router.post('/corporates', authenticateAdmin, async (req, res) => {
         address,
         contact_details,
         benefitnest_manager,
-        branding_config,
         status: 'ACTIVE'
       }])
       .select()
@@ -210,7 +174,7 @@ router.post('/corporates', authenticateAdmin, async (req, res) => {
 /* =========================
    UPDATE CORPORATE
 ========================= */
-router.put('/corporates/:id', authenticateAdmin, async (req, res) => {
+router.put('/corporates/:id', async (req, res) => {
   try {
     const { id } = req.params;
     console.log('Updating corporate:', id);
@@ -227,20 +191,19 @@ router.put('/corporates/:id', authenticateAdmin, async (req, res) => {
       status
     } = req.body;
 
-    const updateData = {};
-    if (corporate_legal_name !== undefined) updateData.corporate_legal_name = corporate_legal_name;
-    if (corporate_group_name !== undefined) updateData.corporate_group_name = corporate_group_name;
-    if (corporate_type !== undefined) updateData.corporate_type = corporate_type;
-    if (industry_type !== undefined) updateData.industry_type = industry_type;
-    if (address !== undefined) updateData.address = address;
-    if (contact_details !== undefined) updateData.contact_details = contact_details;
-    if (benefitnest_manager !== undefined) updateData.benefitnest_manager = benefitnest_manager;
-    if (branding_config !== undefined) updateData.branding_config = branding_config;
-    if (status !== undefined) updateData.status = status;
-
     const { data, error } = await supabase
       .from('tenants')
-      .update(updateData)
+      .update({
+        corporate_legal_name,
+        corporate_group_name,
+        corporate_type,
+        industry_type,
+        address,
+        contact_details,
+        benefitnest_manager,
+        branding_config,
+        status
+      })
       .eq('tenant_id', id)
       .select()
       .single();
@@ -275,7 +238,7 @@ router.put('/corporates/:id', authenticateAdmin, async (req, res) => {
 /* =========================
    DELETE CORPORATE (Soft delete)
 ========================= */
-router.delete('/corporates/:id', authenticateAdmin, async (req, res) => {
+router.delete('/corporates/:id', async (req, res) => {
   try {
     const { id } = req.params;
     console.log('Deleting corporate:', id);
@@ -318,7 +281,7 @@ router.delete('/corporates/:id', authenticateAdmin, async (req, res) => {
 /* =========================
    GET CORPORATE STATS
 ========================= */
-router.get('/corporates/:id/stats', authenticateAdmin, async (req, res) => {
+router.get('/corporates/:id/stats', async (req, res) => {
   try {
     const { id } = req.params;
     
