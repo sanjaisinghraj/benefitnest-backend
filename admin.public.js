@@ -207,4 +207,50 @@ router.get('/check', async (req, res) => {
   }
 });
 
+// POST /verify-password - Verify admin password for sensitive operations
+router.post('/verify-password', async (req, res) => {
+    try {
+        const { password } = req.body;
+        
+        // Get token from header
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ success: false, message: 'No token provided' });
+        }
+        
+        const token = authHeader.split(' ')[1];
+        const jwt = require('jsonwebtoken');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const adminId = decoded.admin_id || decoded.id;
+
+        if (!password) {
+            return res.status(400).json({ success: false, message: 'Password is required' });
+        }
+
+        // Get the admin's stored password hash
+        const { data: admin, error } = await supabase
+            .from('admins')
+            .select('password_hash')
+            .eq('admin_id', adminId)
+            .single();
+
+        if (error || !admin) {
+            return res.status(404).json({ success: false, message: 'Admin not found' });
+        }
+
+        // Compare password
+        const bcrypt = require('bcrypt');
+        const isValid = await bcrypt.compare(password, admin.password_hash);
+
+        if (!isValid) {
+            return res.status(401).json({ success: false, message: 'Invalid password' });
+        }
+
+        res.json({ success: true, message: 'Password verified' });
+    } catch (error) {
+        console.error('Password verification error:', error);
+        res.status(500).json({ success: false, message: 'Verification failed' });
+    }
+});
+
 module.exports = router;

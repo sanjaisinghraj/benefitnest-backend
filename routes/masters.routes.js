@@ -213,55 +213,90 @@ const getTableContext = (table) => {
 };
 
 // =====================================================
-// BUILD CONTEXT-AWARE VALIDATION PROMPT
+// SMART AI VALIDATION PROMPT - Self-Learning, Context-Aware
 // =====================================================
 const buildValidationPrompt = (table, records, context) => {
     const recordsWithRow = records.map((r, i) => ({ _row: i + 1, ...r }));
-    return `You are an expert data validation AI for a global employee benefits and insurance platform. You have deep knowledge of:
-- Insurance companies worldwide (especially India: IRDAI registered)
-- TPAs (Third Party Administrators)
-- Hospitals and healthcare providers
-- Corporate entities and their registration
-- Geographic data (countries, states, cities, pincodes)
-- Industry standards and naming conventions
+    
+    // Extract field names from records to help AI understand the schema
+    const fieldNames = records.length > 0 ? Object.keys(records[0]).join(', ') : 'unknown fields';
+    
+    return `You are an expert data validation AI with access to real-world knowledge about companies, places, regulations, and business entities worldwide.
 
-## YOUR TASK
-Validate the following "${table}" records. This table contains: ${context.description}
+## YOUR MISSION
+Analyze the "${table}" table records and find ANY data quality issues.
 
+## HOW TO THINK:
+1. **Read each field name** and UNDERSTAND what data it should contain:
+   - Field names like "corporate_legal_name", "company_name", "tenant_name" → Real registered company names
+   - Field names like "insurer_name", "insurance_company" → Real insurance companies
+   - Field names like "tpa_name" → Real Third Party Administrators
+   - Field names like "hospital_name" → Real hospitals
+   - Field names like "city", "state", "country" → Real geographic locations
+   - Field names with "email" → Valid email format
+   - Field names with "phone", "mobile" → Valid phone format
+   - Field names like "gstin" → Indian GST number (15 chars: 22AAAAA0000A1Z5)
+   - Field names like "pan" → Indian PAN (10 chars: ABCDE1234F)
+   - Field names like "cin" → Company Identification Number (21 chars)
+   - Field names like "pincode", "zip" → Valid postal codes
+
+2. **Use context from other fields**:
+   - If "country" = "India", validate against Indian data (real Indian companies, cities, states)
+   - If "country" = "USA", validate against US data
+   - City should exist in the specified state
+   - State should exist in the specified country
+
+3. **DETECT DUMMY/TEST/FAKE DATA** (CRITICAL):
+   - Names like "Test", "Demo", "Sample", "ABC", "XYZ", "Dummy", "Example"
+   - Random strings or placeholder text
+   - Obviously fake company names
+   - Names that don't match real registered entities
+   
+4. **VERIFY REAL ENTITIES using your knowledge**:
+   - Indian Insurers: ICICI Lombard, HDFC Ergo, Bajaj Allianz, Star Health, Max Bupa, New India Assurance, United India, National Insurance, Oriental Insurance, SBI General, Tata AIG, Reliance General, Care Health, Niva Bupa, etc.
+   - Indian TPAs: Medi Assist, Vidal Health, MDIndia, Paramount Health, FHPL, Raksha TPA, Heritage Health, Park Mediclaim, etc.
+   - If a company/hospital/place name is given, CHECK if it's real or made up
+
+5. **CHECK DATA CONSISTENCY**:
+   - Industry type should match the company's actual business
+   - Corporate type (Pvt Ltd, LLP, etc.) should match naming convention
+   - Dates should be logical (not in future for past events, etc.)
+
+## TABLE: ${table}
 ## TABLE TYPE: ${context.type}
-
-## KEY FIELDS TO VALIDATE: ${context.keyFields.join(', ')}
-
-## SPECIFIC VALIDATION RULES:
-${context.validationRules.map((rule, i) => (i + 1) + '. ' + rule).join('\n')}
-
-${context.knownEntities.length > 0 ? '## KNOWN VALID ENTITIES (Reference):\n' + context.knownEntities.join(', ') : ''}
+## FIELDS IN RECORDS: ${fieldNames}
 
 ## RECORDS TO VALIDATE:
 ${JSON.stringify(recordsWithRow, null, 2)}
 
-## VALIDATION INSTRUCTIONS:
-1. Be thorough - Check every field against the validation rules
-2. Be specific - Provide exact field names and clear error messages
-3. Cross-reference - If a company/hospital/city name is given, verify it is real
-4. Check spelling - Flag typos in entity names (e.g., "ICIC" instead of "ICICI")
-5. Check formats - Email, phone, GSTIN, PAN, CIN, pincode formats
-6. Check geography - City should be in correct state, state in correct country
-7. Check consistency - Industry type should match business nature
-8. Flag duplicates - If multiple records have same unique identifiers
-9. Suggest corrections - If you know the correct value, include it
+## STRICT VALIDATION RULES:
+- BE VERY STRICT - Flag ANYTHING that looks suspicious
+- Dummy/test data is an ERROR, not just a warning
+- Misspelled city/company names are ERRORS
+- Invalid formats (email, phone, GSTIN, PAN) are ERRORS
+- Inconsistent data (city not in state) are ERRORS
+- Unknown/unverifiable company names are WARNINGS
+- Always provide the current value in your response
+- Always suggest corrections when you know the right value
 
-## SEVERITY LEVELS:
-- "error" - Critical issue, data is definitely wrong
-- "warning" - Potential issue, needs verification
-- "info" - Informational, minor issue
+## RESPONSE FORMAT (PURE JSON - NO MARKDOWN, NO BACKTICKS, NO EXPLANATION):
+{
+  "has_warnings": true,
+  "warnings": [
+    {
+      "row": 1,
+      "field": "corporate_legal_name",
+      "value": "Test Company Pvt Ltd",
+      "message": "This appears to be a dummy/test company name. Please enter the actual registered company name.",
+      "severity": "error",
+      "suggested_value": null
+    }
+  ]
+}
 
-## RESPONSE FORMAT (JSON ONLY, NO MARKDOWN):
-{"has_warnings": true/false, "warnings": [{"row": <number>, "field": "<field_name>", "value": "<current_value>", "message": "<clear description and suggested fix>", "severity": "error"|"warning"|"info", "suggested_value": "<correct_value_if_known>"}]}
+If ALL records pass validation: {"has_warnings": false, "warnings": []}
 
-If ALL records are valid, return: {"has_warnings": false, "warnings": []}
-
-NOW VALIDATE AND RETURN ONLY JSON:`;
+ANALYZE NOW AND RETURN ONLY JSON:`;
 };
 
 // =====================================================
