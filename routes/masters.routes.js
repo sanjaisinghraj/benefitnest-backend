@@ -13,37 +13,33 @@ const supabase = createClient(
 );
 
 // Allowed master tables (security whitelist)
-const ALLOWED_TABLES = [
-    'account_managers', 'admins', 'brokers', 'corporate_types',
-    'icd_codes', 'industry_types', 'insurers', 'job_levels',
-    'tpas', 'policy_type', 'policy_configuration'
-];
-
-// Validate table name
-const isValidTable = (table) => ALLOWED_TABLES.includes(table);
+// Validate table name (allow all public tables)
+const isValidTable = async (table) => {
+    const { data } = await supabase
+        .from('information_schema.tables')
+        .select('table_name')
+        .eq('table_schema', 'public')
+        .eq('table_type', 'BASE TABLE')
+        .eq('table_name', table)
+        .single();
+    return !!data;
+};
 
 // =====================================================
 // GET ALL MASTER TABLES LIST
 // =====================================================
 router.get('/masters/tables', async (req, res) => {
     try {
-        // Return tables that actually exist
-        const existingTables = [];
-        for (const table of ALLOWED_TABLES) {
-            const { count, error } = await supabase
-                .from(table)
-                .select('*', { count: 'exact', head: true });
-            if (!error) {
-                existingTables.push({ name: table, count: count || 0 });
-            }
-        }
-        res.json({ success: true, data: existingTables });
+        const { data, error } = await supabase.rpc('get_all_tables_dynamic');
+        
+        if (error) throw error;
+        
+        res.json({ success: true, data: data || [] });
     } catch (error) {
-        console.error('Error fetching master tables:', error);
+        console.error('Error fetching tables:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
-
 // =====================================================
 // GET TABLE SCHEMA (columns)
 // =====================================================
