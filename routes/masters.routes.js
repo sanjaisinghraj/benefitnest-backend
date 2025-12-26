@@ -651,20 +651,35 @@ router.post('/masters/:table/bulk', async (req, res) => {
         }
 
         // Clean records - remove primary keys and empty strings
-        const cleanRecords = records.map(r => {
-            const copy = { ...r };
-            delete copy[pk];
-            delete copy['_row']; // Remove row number if added
-            
-            // Convert empty strings to null
-            Object.keys(copy).forEach(key => {
-                if (copy[key] === '' || copy[key] === undefined) {
-                    copy[key] = null;
-                }
-            });
-            
-            return copy;
-        });
+// Clean records - remove primary keys, empty strings, and fix dates
+const cleanRecords = records.map(r => {
+    const copy = { ...r };
+    delete copy[pk];
+    delete copy['_row'];
+    
+    Object.keys(copy).forEach(key => {
+        if (copy[key] === '' || copy[key] === undefined) {
+            copy[key] = null;
+        }
+        // Fix timezone issues in dates
+        if (copy[key] && typeof copy[key] === 'string') {
+            // Remove GMT timezone suffix
+            if (copy[key].includes('GMT')) {
+                copy[key] = copy[key].split(' GMT')[0];
+            }
+            // Handle Excel date objects converted to strings
+            if (copy[key].match && copy[key].match(/^\d{4}-\d{2}-\d{2}T/)) {
+                copy[key] = copy[key].split('T')[0];
+            }
+        }
+        // Handle Excel Date objects directly
+        if (copy[key] instanceof Date) {
+            copy[key] = copy[key].toISOString().split('T')[0];
+        }
+    });
+    
+    return copy;
+});
 
         console.log('Clean records:', cleanRecords);
 
