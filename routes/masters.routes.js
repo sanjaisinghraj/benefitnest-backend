@@ -128,7 +128,7 @@ If no issues found, return: {"has_warnings": false, "warnings": []}`;
                     'Authorization': `Bearer ${apiKey}`
                 },
                 body: JSON.stringify({
-                    model: process.env.AI_MODEL || 'llama-3.1-70b-versatile',
+                    model: process.env.AI_MODEL || 'llama-3.3-70b-versatile',
                     messages: [{ role: 'user', content: prompt }],
                     temperature: 0.1,
                     max_tokens: 2000
