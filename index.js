@@ -63,6 +63,11 @@ require("./db");
 /* =========================
    ROUTES
 ========================= */
+
+const mastersRoutes = require('./routes/masters.routes');
+app.use('/api/admin', authMiddleware, mastersRoutes);
+
+
 const adminSchemaRoutes = require('./routes/admin.schema.routes');
 app.use('/api/admin/schema', adminSchemaRoutes);
 
