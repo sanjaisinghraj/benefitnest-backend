@@ -1,4 +1,4 @@
-const supabase = require('../db');
+const { supabase } = require('../db');
 
 const getCorporatesSchema = async (req, res) => {
   try {

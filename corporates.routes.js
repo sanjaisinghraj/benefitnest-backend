@@ -92,7 +92,7 @@ router.get('/corporates', async (req, res) => {
         const {
             // Pagination
             page = 1,
-            limit = 10,
+            limit = 1000,
             
             // Sorting
             sort_by = 'created_at',
