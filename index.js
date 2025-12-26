@@ -64,8 +64,7 @@ require("./db");
    ROUTES
 ========================= */
 
-const mastersRoutes = require('./routes/masters.routes');
-app.use('/api/admin', authMiddleware, mastersRoutes);
+
 
 
 const adminSchemaRoutes = require('./routes/admin.schema.routes');
@@ -84,6 +83,9 @@ const corporatesRoutes = require("./corporates.routes");
 const authMiddleware = require("./auth");
 const tenantMiddleware = require("./tenant");
 const brandingMiddleware = require("./branding");
+
+const mastersRoutes = require('./routes/masters.routes');
+app.use('/api/admin', authMiddleware, mastersRoutes);
 
 /* =========================
    LOGGING MIDDLEWARE
