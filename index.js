@@ -63,6 +63,9 @@ require("./db");
 /* =========================
    ROUTES
 ========================= */
+const adminSchemaRoutes = require('./routes/admin.schema.routes');
+app.use('/api/admin/schema', adminSchemaRoutes);
+
 
 const lookupRoutes = require('./routes/lookup.public');
 app.use('/api/lookup', lookupRoutes);
