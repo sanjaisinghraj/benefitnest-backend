@@ -1,39 +1,36 @@
-const db = require('../db'); // your existing pg / sequelize connection
+const supabase = require('../db');
 
-exports.getCorporatesSchema = async (req, res) => {
+/**
+ * GET /api/admin/schema/corporates
+ * Returns DB schema for tenants table (used as corporates master)
+ */
+const getCorporatesSchema = async (req, res) => {
   try {
-    const columnsQuery = `
-      SELECT
+    const { data, error } = await supabase
+      .from('information_schema.columns')
+      .select(`
         column_name,
         data_type,
         is_nullable,
         column_default
-      FROM information_schema.columns
-      WHERE table_name = 'corporates'
-      ORDER BY ordinal_position;
-    `;
+      `)
+      .eq('table_schema', 'public')
+      .eq('table_name', 'tenants')
+      .order('ordinal_position');
 
-    const constraintsQuery = `
-      SELECT
-        tc.constraint_type,
-        kcu.column_name
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-      WHERE tc.table_name = 'corporates';
-    `;
+    if (error) throw error;
 
-    const columns = await db.query(columnsQuery);
-    const constraints = await db.query(constraintsQuery);
-
-    res.json({
+    return res.status(200).json({
       success: true,
-      table: 'corporates',
-      columns: columns.rows,
-      constraints: constraints.rows
+      columns: data
     });
   } catch (err) {
-    console.error('Schema fetch error:', err);
-    res.status(500).json({ success: false, message: 'Failed to load schema' });
+    console.error('Schema API error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch schema'
+    });
   }
 };
+
+module.exports = { getCorporatesSchema };
