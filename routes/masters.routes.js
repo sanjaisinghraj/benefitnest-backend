@@ -230,6 +230,72 @@ router.get('/masters/tables', async (req, res) => {
 });
 
 // =====================================================
+// GET LOOKUP DATA (for dropdowns - corporate_types, industry_types, etc.)
+// =====================================================
+router.get('/masters/lookups/all', async (req, res) => {
+    try {
+        const lookups = {};
+
+        // Corporate Types
+        const { data: corporateTypes } = await supabase
+            .from('corporate_types')
+            .select('id, name, code')
+            .eq('is_active', true)
+            .order('name');
+        lookups.corporate_types = corporateTypes || [];
+
+        // Industry Types
+        const { data: industryTypes } = await supabase
+            .from('industry_types')
+            .select('id, name, code')
+            .eq('is_active', true)
+            .order('name');
+        lookups.industry_types = industryTypes || [];
+
+        // Job Levels
+        const { data: jobLevels } = await supabase
+            .from('job_levels')
+            .select('id, name, code')
+            .eq('is_active', true)
+            .order('name');
+        lookups.job_levels = jobLevels || [];
+
+        // Insurers
+        const { data: insurers } = await supabase
+            .from('insurers')
+            .select('insurer_id, name, code')
+            .order('name');
+        lookups.insurers = insurers || [];
+
+        // TPAs
+        const { data: tpas } = await supabase
+            .from('tpas')
+            .select('tpa_id, name, code')
+            .order('name');
+        lookups.tpas = tpas || [];
+
+        // Brokers
+        const { data: brokers } = await supabase
+            .from('brokers')
+            .select('broker_id, name, code')
+            .order('name');
+        lookups.brokers = brokers || [];
+
+        // Account Managers
+        const { data: managers } = await supabase
+            .from('account_managers')
+            .select('manager_id, name, email')
+            .order('name');
+        lookups.account_managers = managers || [];
+
+        res.json({ success: true, lookups });
+    } catch (error) {
+        console.error('Error fetching lookups:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// =====================================================
 // GET TABLE SCHEMA (Dynamic) - Enhanced with more details
 // =====================================================
 router.get('/masters/:table/schema', async (req, res) => {
@@ -492,71 +558,6 @@ router.get('/masters/:table/fk-options', async (req, res) => {
     }
 });
 
-// =====================================================
-// GET LOOKUP DATA (for dropdowns - corporate_types, industry_types, etc.)
-// =====================================================
-router.get('/masters/lookups/all', async (req, res) => {
-    try {
-        const lookups = {};
-
-        // Corporate Types
-        const { data: corporateTypes } = await supabase
-            .from('corporate_types')
-            .select('id, name, code')
-            .eq('is_active', true)
-            .order('name');
-        lookups.corporate_types = corporateTypes || [];
-
-        // Industry Types
-        const { data: industryTypes } = await supabase
-            .from('industry_types')
-            .select('id, name, code')
-            .eq('is_active', true)
-            .order('name');
-        lookups.industry_types = industryTypes || [];
-
-        // Job Levels
-        const { data: jobLevels } = await supabase
-            .from('job_levels')
-            .select('id, name, code')
-            .eq('is_active', true)
-            .order('name');
-        lookups.job_levels = jobLevels || [];
-
-        // Insurers
-        const { data: insurers } = await supabase
-            .from('insurers')
-            .select('insurer_id, name, code')
-            .order('name');
-        lookups.insurers = insurers || [];
-
-        // TPAs
-        const { data: tpas } = await supabase
-            .from('tpas')
-            .select('tpa_id, name, code')
-            .order('name');
-        lookups.tpas = tpas || [];
-
-        // Brokers
-        const { data: brokers } = await supabase
-            .from('brokers')
-            .select('broker_id, name, code')
-            .order('name');
-        lookups.brokers = brokers || [];
-
-        // Account Managers
-        const { data: managers } = await supabase
-            .from('account_managers')
-            .select('manager_id, name, email')
-            .order('name');
-        lookups.account_managers = managers || [];
-
-        res.json({ success: true, lookups });
-    } catch (error) {
-        console.error('Error fetching lookups:', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
 
 // =====================================================
 // CREATE RECORD (with AI validation)
