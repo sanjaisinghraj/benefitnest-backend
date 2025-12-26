@@ -67,6 +67,11 @@ const logAudit = async (req, {
 // =====================================================
 // HELPER: AI VALIDATION (Pluggable Provider)
 // =====================================================
+// =====================================================
+// ENHANCED AI VALIDATION FUNCTION
+// Replace the existing performAIValidation function with this
+// =====================================================
+
 const performAIValidation = async (table, records, validationType = 'general') => {
     const provider = process.env.AI_PROVIDER || 'groq';
     const apiKey = process.env.AI_API_KEY || process.env.CLAUDE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY;
@@ -77,45 +82,9 @@ const performAIValidation = async (table, records, validationType = 'general') =
     }
 
     try {
-        let prompt = '';
-        
-        if (validationType === 'regulatory') {
-            prompt = `You are validating ${table} records for regulatory compliance in an insurance platform.
-
-For each record, check:
-1. If the entity name matches known registered entities in the specified country
-2. If required regulatory identifiers are present and valid
-3. If the entity type and category are consistent with regulations
-4. Any suspicious or potentially fraudulent data
-
-Records to validate:
-${JSON.stringify(records, null, 2)}
-
-Return ONLY valid JSON (no markdown, no explanation):
-{"has_warnings": boolean, "warnings": [{"row": number, "field": string, "message": string, "severity": "error"|"warning"|"info", "verification_url": string|null}]}`;
-        } else {
-            prompt = `You are a data validation AI for an insurance corporate platform. Validate these ${table} records thoroughly.
-
-CHECK FOR:
-1. **Insurers/TPAs**: Verify company names are real and correctly spelled (e.g., "ICIC Lombard" should be "ICICI Lombard", "HDFC Ergo" is correct)
-2. **Email formats**: Must be valid email format
-3. **Phone numbers**: Should have valid format for the country
-4. **Country/State/City**: Must be real, correctly spelled places
-5. **Codes**: Should follow standard patterns (uppercase, no spaces)
-6. **Required fields**: Flag if critical fields are empty
-7. **Data consistency**: Industry type should match corporate type, etc.
-8. **Duplicates**: Flag potential duplicate entries
-
-Records to validate (Row numbers start from 1):
-${JSON.stringify(records.map((r, i) => ({ _row: i + 1, ...r })), null, 2)}
-
-IMPORTANT: Be strict. Flag ANY suspicious data. Real insurance companies include: ICICI Lombard, HDFC Ergo, Bajaj Allianz, Star Health, Max Bupa, Religare, New India Assurance, United India, National Insurance, Oriental Insurance, etc.
-
-Return ONLY valid JSON (no markdown, no backticks, no explanation):
-{"has_warnings": boolean, "warnings": [{"row": number, "field": string, "message": string, "severity": "error"|"warning"|"info"}]}
-
-If no issues found, return: {"has_warnings": false, "warnings": []}`;
-        }
+        // Build context-aware prompt based on table type
+        const tableContext = getTableContext(table);
+        const prompt = buildValidationPrompt(table, records, tableContext);
 
         let response;
         let result;
@@ -131,29 +100,28 @@ If no issues found, return: {"has_warnings": false, "warnings": []}`;
                     model: process.env.AI_MODEL || 'llama-3.3-70b-versatile',
                     messages: [{ role: 'user', content: prompt }],
                     temperature: 0.1,
-                    max_tokens: 2000
+                    max_tokens: 4000
                 })
             });
 
             result = await response.json();
             console.log('Groq API response status:', response.status);
-            
+
             if (result.error) {
                 console.error('Groq API error:', result.error);
                 return { has_warnings: false, warnings: [] };
             }
 
             const content = result.choices?.[0]?.message?.content || '{"has_warnings": false, "warnings": []}';
-            console.log('Groq content:', content.substring(0, 200));
-            
+            console.log('Groq content:', content.substring(0, 500));
+
             // Clean and parse response
             let cleanContent = content.replace(/```json|```/g, '').trim();
-            // Find JSON object in response
             const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 cleanContent = jsonMatch[0];
             }
-            
+
             return JSON.parse(cleanContent);
 
         } else if (provider === 'claude' || provider === 'anthropic') {
@@ -166,7 +134,401 @@ If no issues found, return: {"has_warnings": false, "warnings": []}`;
                 },
                 body: JSON.stringify({
                     model: process.env.AI_MODEL || 'claude-sonnet-4-20250514',
-                    max_tokens: 2000,
+                    max_tokens: 4000,
+                    messages: [{ role: 'user', content: prompt }]
+                })
+            });
+
+            result = await response.json();
+            const content = result.content?.[0]?.text || '{"has_warnings": false, "warnings": []}';
+            return JSON.parse(content.replace(/```json|```/g, '').trim());
+
+        } else if (provider === 'openai') {
+            response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: process.env.AI_MODEL || 'gpt-4o-mini',
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: 0.1
+                })
+            });
+
+            result = await response.json();
+            const content = result.choices?.[0]?.message?.content || '{"has_warnings": false, "warnings": []}';
+            return JSON.parse(content.replace(/```json|```/g, '').trim());
+
+        } else if (provider === 'gemini') {
+            response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
+            });
+
+            result = await response.json();
+            const content = result.candidates?.[0]?.content?.parts?.[0]?.text || '{"has_warnings": false, "warnings": []}';
+            return JSON.parse(content.replace(/```json|```/g, '').trim());
+        }
+
+        return { has_warnings: false, warnings: [] };
+
+    } catch (error) {
+        console.error('AI validation error:', error);
+        return { has_warnings: false, warnings: [] };
+    }
+};
+
+// =====================================================
+// GET TABLE-SPECIFIC CONTEXT
+// =====================================================
+const getTableContext = (table) => {
+    const contexts = {
+        // INSURERS
+        insurers: {
+            type: 'INSURANCE_COMPANY',
+            description: 'Insurance companies/carriers that provide insurance policies',
+            keyFields: ['name', 'code', 'email', 'phone', 'website', 'country', 'state', 'city', 'address'],
+            validationRules: [
+                'Verify insurer name is a real, registered insurance company in the specified country',
+                'In India: Check against IRDAI registered insurers (e.g., ICICI Lombard, HDFC Ergo, Bajaj Allianz, Star Health, Max Bupa, New India Assurance, United India Insurance, National Insurance, Oriental Insurance, SBI General, Tata AIG, Reliance General, Future Generali, Cholamandalam, Royal Sundaram, Niva Bupa, Care Health, Aditya Birla Health, ManipalCigna, etc.)',
+                'Check for typos in insurer names (e.g., "ICIC Lombard" should be "ICICI Lombard")',
+                'Verify GSTIN format if provided (15 characters, specific pattern)',
+                'Check PAN format if provided (10 characters, ABCDE1234F pattern)',
+                'Validate CIN format for Indian companies',
+                'Website should be valid URL format',
+                'Email should be valid corporate email format'
+            ],
+            knownEntities: {
+                india: ['ICICI Lombard', 'HDFC Ergo', 'Bajaj Allianz', 'Star Health', 'Max Bupa', 'Niva Bupa', 'Care Health', 'New India Assurance', 'United India Insurance', 'National Insurance Company', 'Oriental Insurance', 'SBI General', 'Tata AIG', 'Reliance General', 'Future Generali', 'Cholamandalam MS', 'Royal Sundaram', 'Aditya Birla Health', 'ManipalCigna', 'Go Digit', 'Acko', 'Iffco Tokio', 'Liberty General', 'Kotak Mahindra General', 'Magma HDI'],
+                usa: ['UnitedHealth', 'Anthem', 'Aetna', 'Cigna', 'Humana', 'Kaiser Permanente', 'Blue Cross Blue Shield'],
+                uk: ['Aviva', 'AXA', 'Bupa', 'Legal & General', 'Prudential'],
+                uae: ['Daman', 'Oman Insurance', 'AXA Gulf', 'Cigna', 'MetLife']
+            }
+        },
+
+        // TPAs
+        tpas: {
+            type: 'TPA',
+            description: 'Third Party Administrators that manage insurance claims',
+            keyFields: ['name', 'code', 'email', 'phone', 'website', 'country', 'state', 'city', 'license_number'],
+            validationRules: [
+                'Verify TPA name is a real, IRDAI registered TPA in India',
+                'Known Indian TPAs: Medi Assist, Vidal Health (formerly TTK), Health India, MDIndia, Paramount Health, FHPL (Family Health Plan), Raksha TPA, Heritage Health, Safeway, Anytime Health, Good Health, Ericson, Park Mediclaim, Genins India, Medsave, East West Assist, Alankit, United Healthcare Parekh',
+                'Check for typos in TPA names',
+                'Verify TPA license number format if provided',
+                'Email should be valid corporate email format',
+                'Phone should have valid format for the country'
+            ],
+            knownEntities: {
+                india: ['Medi Assist', 'Vidal Health', 'Health India TPA', 'MDIndia', 'Paramount Health Services', 'FHPL', 'Raksha TPA', 'Heritage Health TPA', 'Safeway TPA', 'Anytime Health', 'Good Health TPA', 'Ericson TPA', 'Park Mediclaim', 'Genins India', 'Medsave Health', 'East West Assist', 'Alankit Healthcare', 'United Healthcare Parekh']
+            }
+        },
+
+        // BROKERS
+        brokers: {
+            type: 'INSURANCE_BROKER',
+            description: 'Insurance brokers that sell and service insurance policies',
+            keyFields: ['name', 'code', 'email', 'phone', 'license_number', 'country', 'state', 'city'],
+            validationRules: [
+                'Verify broker name if it is a known registered broker',
+                'In India: Should have IRDAI broker license',
+                'Known brokers: Marsh, Aon, Willis Towers Watson, Gallagher, JLT, Howden, Lockton, Hub International',
+                'Indian brokers: Insurance Dekho, Policy Bazaar, Coverfox, Turtlemint, RenewBuy',
+                'License number format should be valid',
+                'Email should be valid corporate email format'
+            ],
+            knownEntities: {
+                global: ['Marsh', 'Aon', 'Willis Towers Watson', 'Gallagher', 'Howden', 'Lockton', 'Hub International', 'Brown & Brown'],
+                india: ['Marsh India', 'Aon India', 'Willis Towers Watson India', 'Policy Bazaar', 'Insurance Dekho', 'Coverfox', 'Turtlemint', 'RenewBuy', 'ICICI Lombard Insurance Broking']
+            }
+        },
+
+        // TENANTS / CORPORATES
+        tenants: {
+            type: 'CORPORATE',
+            description: 'Corporate clients/companies that purchase group insurance for employees',
+            keyFields: ['name', 'corporate_type', 'industry_type', 'email', 'phone', 'website', 'country', 'state', 'city', 'gstin', 'pan', 'cin', 'address'],
+            validationRules: [
+                'Corporate name should be a valid registered company name',
+                'If Indian company: Verify against MCA (Ministry of Corporate Affairs) naming conventions',
+                'GSTIN must be 15 characters with valid format (e.g., 22AAAAA0000A1Z5)',
+                'PAN must be 10 characters (e.g., ABCDE1234F)',
+                'CIN must be 21 characters for Indian companies',
+                'Industry type should match the nature of business',
+                'Corporate type should be valid (Private Limited, Public Limited, LLP, Partnership, Proprietorship, etc.)',
+                'Email should be valid corporate email (not personal gmail/yahoo)',
+                'Website should be valid URL',
+                'Address, city, state, country should be real and correctly spelled',
+                'Pincode should match city/state for Indian addresses'
+            ]
+        },
+
+        // HOSPITALS
+        hospitals: {
+            type: 'HOSPITAL',
+            description: 'Healthcare providers / Hospitals in the network',
+            keyFields: ['name', 'hospital_type', 'address', 'city', 'state', 'country', 'pincode', 'phone', 'email', 'registration_number', 'accreditation'],
+            validationRules: [
+                'Hospital name should be a real, existing hospital',
+                'Verify hospital exists in the specified city/location',
+                'Known hospital chains in India: Apollo, Fortis, Max Healthcare, Medanta, Manipal Hospitals, Narayana Health, AIIMS, Kokilaben Dhirubhai Ambani, Lilavati, Breach Candy, Jaslok, Hinduja, Wockhardt, Columbia Asia, Aster, Global Hospitals, Yashoda, Care Hospitals, KIMS, Continental',
+                'Registration number should be valid format',
+                'NABH/NABL/JCI accreditation if mentioned should be verifiable',
+                'Address should be complete and valid',
+                'City and state should match correctly',
+                'Pincode should be valid for the city/state'
+            ],
+            knownEntities: {
+                india: ['Apollo Hospitals', 'Fortis Healthcare', 'Max Healthcare', 'Medanta', 'Manipal Hospitals', 'Narayana Health', 'AIIMS', 'Kokilaben Dhirubhai Ambani Hospital', 'Lilavati Hospital', 'Breach Candy Hospital', 'Jaslok Hospital', 'Hinduja Hospital', 'Wockhardt Hospitals', 'Columbia Asia', 'Aster Hospitals', 'Global Hospitals', 'Yashoda Hospitals', 'Care Hospitals', 'KIMS', 'Continental Hospitals', 'Artemis Hospital', 'BLK Super Speciality', 'Sir Ganga Ram Hospital', 'Safdarjung Hospital', 'Tata Memorial']
+            }
+        },
+
+        // INSURER LOCATIONS
+        insurer_locations: {
+            type: 'INSURER_LOCATION',
+            description: 'Branch offices and locations of insurance companies',
+            keyFields: ['insurer_id', 'office_type', 'office_name', 'address', 'city', 'state', 'country', 'pincode', 'phone', 'email'],
+            validationRules: [
+                'insurer_id must reference a valid insurer',
+                'Office type should be valid (HO, RO, DO, BO, Branch, Claims Center)',
+                'City, state, country must be real places',
+                'City should be in the correct state',
+                'State should be in the correct country',
+                'Pincode should match the city (for India)',
+                'Phone format should be valid for the country',
+                'Email should be valid format'
+            ]
+        },
+
+        // TPA LOCATIONS
+        tpa_locations: {
+            type: 'TPA_LOCATION',
+            description: 'Branch offices and locations of TPAs',
+            keyFields: ['tpa_id', 'office_type', 'office_name', 'address', 'city', 'state', 'country', 'pincode', 'phone', 'email'],
+            validationRules: [
+                'tpa_id must reference a valid TPA',
+                'Office type should be valid (HO, RO, DO, BO, Branch, Claims Center)',
+                'City, state, country must be real places',
+                'City should be in the correct state',
+                'State should be in the correct country',
+                'Pincode should match the city (for India)',
+                'Phone format should be valid for the country'
+            ]
+        },
+
+        // CORPORATE TYPES
+        corporate_types: {
+            type: 'MASTER_DATA',
+            description: 'Types of corporate entities (Private Limited, Public Limited, LLP, etc.)',
+            keyFields: ['name', 'code', 'description'],
+            validationRules: [
+                'Name should be a valid corporate type',
+                'Valid types: Private Limited, Public Limited, LLP, Partnership, Proprietorship, Trust, Society, Government, PSU, NGO, etc.',
+                'Code should be uppercase, no spaces, unique',
+                'Check for duplicates'
+            ]
+        },
+
+        // INDUSTRY TYPES
+        industry_types: {
+            type: 'MASTER_DATA',
+            description: 'Industry classifications (IT, Manufacturing, Healthcare, etc.)',
+            keyFields: ['name', 'code', 'description'],
+            validationRules: [
+                'Name should be a valid industry classification',
+                'Valid industries: IT/Software, Manufacturing, Healthcare, BFSI, Retail, Telecom, Automobile, Pharma, FMCG, Education, Hospitality, Real Estate, Media, E-commerce, etc.',
+                'Code should be uppercase, no spaces, unique',
+                'Check for duplicates'
+            ]
+        },
+
+        // JOB LEVELS
+        job_levels: {
+            type: 'MASTER_DATA',
+            description: 'Employee job levels/grades',
+            keyFields: ['name', 'code', 'description', 'sort_order'],
+            validationRules: [
+                'Name should be a valid job level',
+                'Common levels: Trainee, Junior, Associate, Senior, Lead, Manager, Senior Manager, AVP, VP, SVP, Director, Senior Director, CXO',
+                'Code should be uppercase, no spaces, unique',
+                'Sort order should be logical (junior levels < senior levels)',
+                'Check for duplicates'
+            ]
+        },
+
+        // ACCOUNT MANAGERS
+        account_managers: {
+            type: 'USER',
+            description: 'Account managers who manage corporate clients',
+            keyFields: ['name', 'email', 'phone', 'employee_id'],
+            validationRules: [
+                'Name should be a valid person name',
+                'Email should be valid corporate email format (not personal)',
+                'Phone should be valid format',
+                'Employee ID should follow company convention',
+                'Check for duplicate emails',
+                'Check for duplicate employee IDs'
+            ]
+        },
+
+        // ADMINS
+        admins: {
+            type: 'USER',
+            description: 'System administrators',
+            keyFields: ['name', 'email', 'phone', 'role'],
+            validationRules: [
+                'Name should be a valid person name',
+                'Email should be valid format',
+                'Phone should be valid format',
+                'Role should be valid (Super Admin, Admin, Manager, etc.)',
+                'Check for duplicate emails'
+            ]
+        },
+
+        // REGULATORY AUTHORITIES
+        regulatory_authorities: {
+            type: 'MASTER_DATA',
+            description: 'Government regulatory authorities for insurance',
+            keyFields: ['entity_type', 'country', 'authority_name', 'verification_url'],
+            validationRules: [
+                'Entity type should be valid (INSURER, TPA, CORPORATE)',
+                'Country should be a real country',
+                'Authority name should be correct for the country',
+                'India: IRDAI for insurers/TPAs, MCA for corporates',
+                'USA: State insurance departments, SEC',
+                'UK: FCA, PRA',
+                'Verification URL should be valid and accessible'
+            ]
+        },
+
+        // ICD CODES
+        icd_codes: {
+            type: 'MEDICAL_CODE',
+            description: 'International Classification of Diseases codes',
+            keyFields: ['code', 'description', 'category'],
+            validationRules: [
+                'Code should follow ICD-10/ICD-11 format',
+                'Description should match the official ICD description',
+                'Category should be valid',
+                'Check for duplicates'
+            ]
+        },
+
+        // POLICY TYPE
+        policy_type: {
+            type: 'MASTER_DATA',
+            description: 'Types of insurance policies',
+            keyFields: ['name', 'code', 'description', 'category'],
+            validationRules: [
+                'Name should be a valid policy type',
+                'Valid types: Group Health, Group Term Life, Personal Accident, Top-up, Super Top-up, OPD, Dental, Vision, Critical Illness, etc.',
+                'Code should be uppercase, no spaces',
+                'Check for duplicates'
+            ]
+        },
+
+        // POLICY CONFIGURATION
+        policy_configuration: {
+            type: 'CONFIGURATION',
+            description: 'Policy configuration settings',
+            keyFields: ['policy_type_id', 'name', 'value'],
+            validationRules: [
+                'policy_type_id must reference a valid policy type',
+                'Configuration name should be meaningful',
+                'Value should be appropriate for the configuration type'
+            ]
+        }
+    };
+
+    return contexts[table] || {
+        type: 'GENERIC',
+        description: `Generic data table: ${table}`,
+        keyFields: [],
+        validationRules: [
+            'Check for empty required fields',
+            'Validate email formats',
+            'Validate phone formats',
+            'Check for duplicates',
+            'Verify country/state/city if present'
+        ]
+    };
+};
+
+// =====================================================
+// BUILD CONTEXT-AWARE VALIDATION PROMPT
+// =====================================================
+const buildValidationPrompt = (table, records, context) => {
+    const recordsWithRow = records.map((r, i) => ({ _row: i + 1, ...r }));
+    
+    return `You are an expert data validation AI for a global employee benefits and insurance platform. You have deep knowledge of:
+- Insurance companies worldwide (especially India: IRDAI registered)
+- TPAs (Third Party Administrators)
+- Hospitals and healthcare providers
+- Corporate entities and their registration
+- Geographic data (countries, states, cities, pincodes)
+- Industry standards and naming conventions
+
+## YOUR TASK
+Validate the following "${table}" records. This table contains: ${context.description}
+
+## TABLE TYPE: ${context.type}
+
+## KEY FIELDS TO VALIDATE: ${context.keyFields.join(', ')}
+
+## SPECIFIC VALIDATION RULES FOR THIS TABLE:
+${context.validationRules.map((rule, i) => `${i + 1}. ${rule}`).join('\n')}
+
+${context.knownEntities ? `
+## KNOWN VALID ENTITIES (Reference List):
+${Object.entries(context.knownEntities).map(([region, entities]) => `${region.toUpperCase()}: ${entities.join(', ')}`).join('\n')}
+` : ''}
+
+## RECORDS TO VALIDATE:
+${JSON.stringify(recordsWithRow, null, 2)}
+
+## VALIDATION INSTRUCTIONS:
+1. **Be thorough** - Check every field against the validation rules
+2. **Be specific** - Provide exact field names and clear error messages
+3. **Cross-reference** - If a company/hospital/city name is given, verify it's real
+4. **Check spelling** - Flag typos in entity names (e.g., "ICIC" instead of "ICICI")
+5. **Check formats** - Email, phone, GSTIN, PAN, CIN, pincode formats
+6. **Check geography** - City should be in correct state, state in correct country
+7. **Check consistency** - Industry type should match business nature
+8. **Flag duplicates** - If multiple records have same unique identifiers
+9. **Suggest corrections** - If you know the correct value, include it in the message
+
+## SEVERITY LEVELS:
+- "error" - Critical issue, data is definitely wrong (e.g., invalid GSTIN format, non-existent company)
+- "warning" - Potential issue, needs verification (e.g., company name spelling might be wrong)
+- "info" - Informational, minor issue (e.g., missing optional field, formatting suggestion)
+
+## RESPONSE FORMAT (JSON ONLY, NO MARKDOWN):
+{
+  "has_warnings": true/false,
+  "warnings": [
+    {
+      "row": <row_number>,
+      "field": "<field_name>",
+      "value": "<current_value>",
+      "message": "<clear description of the issue and suggested fix>",
+      "severity": "error" | "warning" | "info",
+      "suggested_value": "<correct_value_if_known>" // optional
+    }
+  ]
+}
+
+If ALL records are valid, return: {"has_warnings": false, "warnings": []}
+
+NOW VALIDATE THE RECORDS AND RETURN ONLY JSON:`;
+};
+
+// Export for use in routes
+module.exports = { performAIValidation, getTableContext, buildValidationPrompt };
                     messages: [{ role: 'user', content: prompt }]
                 })
             });
@@ -228,127 +590,6 @@ router.get('/masters/tables', async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 });
-
-// =====================================================
-// GET LOOKUP DATA (for dropdowns - corporate_types, industry_types, etc.)
-// =====================================================
-router.get('/masters/lookups/all', async (req, res) => {
-    try {
-        const lookups = {};
-
-        // Corporate Types
-        const { data: corporateTypes } = await supabase
-            .from('corporate_types')
-            .select('id, name, code')
-            .eq('is_active', true)
-            .order('name');
-        lookups.corporate_types = corporateTypes || [];
-
-        // Industry Types
-        const { data: industryTypes } = await supabase
-            .from('industry_types')
-            .select('id, name, code')
-            .eq('is_active', true)
-            .order('name');
-        lookups.industry_types = industryTypes || [];
-
-        // Job Levels
-        const { data: jobLevels } = await supabase
-            .from('job_levels')
-            .select('id, name, code')
-            .eq('is_active', true)
-            .order('name');
-        lookups.job_levels = jobLevels || [];
-
-        // Insurers
-        const { data: insurers } = await supabase
-            .from('insurers')
-            .select('insurer_id, name, code')
-            .order('name');
-        lookups.insurers = insurers || [];
-
-        // TPAs
-        const { data: tpas } = await supabase
-            .from('tpas')
-            .select('tpa_id, name, code')
-            .order('name');
-        lookups.tpas = tpas || [];
-
-        // Brokers
-        const { data: brokers } = await supabase
-            .from('brokers')
-            .select('broker_id, name, code')
-            .order('name');
-        lookups.brokers = brokers || [];
-
-        // Account Managers
-        const { data: managers } = await supabase
-            .from('account_managers')
-            .select('manager_id, name, email')
-            .order('name');
-        lookups.account_managers = managers || [];
-
-        res.json({ success: true, lookups });
-    } catch (error) {
-        console.error('Error fetching lookups:', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
-
-// =====================================================
-// GET FOREIGN KEY OPTIONS (for dropdowns)
-// =====================================================
-router.get('/masters/:table/fk-options', async (req, res) => {
-    try {
-        const { table } = req.params;
-
-        // Define FK relationships
-        const fkRelations = {
-            'tpa_locations': {
-                'tpa_id': { table: 'tpas', pk: 'tpa_id', display: 'name' }
-            },
-            'insurer_locations': {
-                'insurer_id': { table: 'insurers', pk: 'insurer_id', display: 'name' }
-            },
-            'policy_configuration': {
-                'policy_type_id': { table: 'policy_type', pk: 'id', display: 'name' }
-            },
-            'tenants': {
-                'insurer_id': { table: 'insurers', pk: 'insurer_id', display: 'name' },
-                'broker_id': { table: 'brokers', pk: 'broker_id', display: 'name' },
-                'tpa_id': { table: 'tpas', pk: 'tpa_id', display: 'name' },
-                'account_manager_id': { table: 'account_managers', pk: 'manager_id', display: 'name' },
-                'corporate_type': { table: 'corporate_types', pk: 'id', display: 'name' },
-                'industry_type': { table: 'industry_types', pk: 'id', display: 'name' }
-            }
-        };
-
-        const relations = fkRelations[table] || {};
-        const options = {};
-
-        for (const [column, config] of Object.entries(relations)) {
-            try {
-                const { data } = await supabase
-                    .from(config.table)
-                    .select(`${config.pk}, ${config.display}`)
-                    .order(config.display);
-
-                options[column] = (data || []).map(row => ({
-                    value: row[config.pk],
-                    label: row[config.display] || row[config.pk]
-                }));
-            } catch (e) {
-                options[column] = [];
-            }
-        }
-
-        res.json({ success: true, options });
-    } catch (error) {
-        console.error('Error fetching FK options:', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
-
 
 // =====================================================
 // GET TABLE SCHEMA (Dynamic) - Enhanced with more details
@@ -559,7 +800,125 @@ router.get('/masters/:table/:id/dependencies', async (req, res) => {
     }
 });
 
+// =====================================================
+// GET FOREIGN KEY OPTIONS (for dropdowns)
+// =====================================================
+router.get('/masters/:table/fk-options', async (req, res) => {
+    try {
+        const { table } = req.params;
 
+        // Define FK relationships
+        const fkRelations = {
+            'tpa_locations': {
+                'tpa_id': { table: 'tpas', pk: 'tpa_id', display: 'name' }
+            },
+            'insurer_locations': {
+                'insurer_id': { table: 'insurers', pk: 'insurer_id', display: 'name' }
+            },
+            'policy_configuration': {
+                'policy_type_id': { table: 'policy_type', pk: 'id', display: 'name' }
+            },
+            'tenants': {
+                'insurer_id': { table: 'insurers', pk: 'insurer_id', display: 'name' },
+                'broker_id': { table: 'brokers', pk: 'broker_id', display: 'name' },
+                'tpa_id': { table: 'tpas', pk: 'tpa_id', display: 'name' },
+                'account_manager_id': { table: 'account_managers', pk: 'manager_id', display: 'name' },
+                'corporate_type': { table: 'corporate_types', pk: 'id', display: 'name' },
+                'industry_type': { table: 'industry_types', pk: 'id', display: 'name' }
+            }
+        };
+
+        const relations = fkRelations[table] || {};
+        const options = {};
+
+        for (const [column, config] of Object.entries(relations)) {
+            try {
+                const { data } = await supabase
+                    .from(config.table)
+                    .select(`${config.pk}, ${config.display}`)
+                    .order(config.display);
+
+                options[column] = (data || []).map(row => ({
+                    value: row[config.pk],
+                    label: row[config.display] || row[config.pk]
+                }));
+            } catch (e) {
+                options[column] = [];
+            }
+        }
+
+        res.json({ success: true, options });
+    } catch (error) {
+        console.error('Error fetching FK options:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// =====================================================
+// GET LOOKUP DATA (for dropdowns - corporate_types, industry_types, etc.)
+// =====================================================
+router.get('/masters/lookups/all', async (req, res) => {
+    try {
+        const lookups = {};
+
+        // Corporate Types
+        const { data: corporateTypes } = await supabase
+            .from('corporate_types')
+            .select('id, name, code')
+            .eq('is_active', true)
+            .order('name');
+        lookups.corporate_types = corporateTypes || [];
+
+        // Industry Types
+        const { data: industryTypes } = await supabase
+            .from('industry_types')
+            .select('id, name, code')
+            .eq('is_active', true)
+            .order('name');
+        lookups.industry_types = industryTypes || [];
+
+        // Job Levels
+        const { data: jobLevels } = await supabase
+            .from('job_levels')
+            .select('id, name, code')
+            .eq('is_active', true)
+            .order('name');
+        lookups.job_levels = jobLevels || [];
+
+        // Insurers
+        const { data: insurers } = await supabase
+            .from('insurers')
+            .select('insurer_id, name, code')
+            .order('name');
+        lookups.insurers = insurers || [];
+
+        // TPAs
+        const { data: tpas } = await supabase
+            .from('tpas')
+            .select('tpa_id, name, code')
+            .order('name');
+        lookups.tpas = tpas || [];
+
+        // Brokers
+        const { data: brokers } = await supabase
+            .from('brokers')
+            .select('broker_id, name, code')
+            .order('name');
+        lookups.brokers = brokers || [];
+
+        // Account Managers
+        const { data: managers } = await supabase
+            .from('account_managers')
+            .select('manager_id, name, email')
+            .order('name');
+        lookups.account_managers = managers || [];
+
+        res.json({ success: true, lookups });
+    } catch (error) {
+        console.error('Error fetching lookups:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
 
 // =====================================================
 // CREATE RECORD (with AI validation)
@@ -653,35 +1012,20 @@ router.post('/masters/:table/bulk', async (req, res) => {
         }
 
         // Clean records - remove primary keys and empty strings
-// Clean records - remove primary keys, empty strings, and fix dates
-const cleanRecords = records.map(r => {
-    const copy = { ...r };
-    delete copy[pk];
-    delete copy['_row'];
-    
-    Object.keys(copy).forEach(key => {
-        if (copy[key] === '' || copy[key] === undefined) {
-            copy[key] = null;
-        }
-        // Fix timezone issues in dates
-        if (copy[key] && typeof copy[key] === 'string') {
-            // Remove GMT timezone suffix
-            if (copy[key].includes('GMT')) {
-                copy[key] = copy[key].split(' GMT')[0];
-            }
-            // Handle Excel date objects converted to strings
-            if (copy[key].match && copy[key].match(/^\d{4}-\d{2}-\d{2}T/)) {
-                copy[key] = copy[key].split('T')[0];
-            }
-        }
-        // Handle Excel Date objects directly
-        if (copy[key] instanceof Date) {
-            copy[key] = copy[key].toISOString().split('T')[0];
-        }
-    });
-    
-    return copy;
-});
+        const cleanRecords = records.map(r => {
+            const copy = { ...r };
+            delete copy[pk];
+            delete copy['_row']; // Remove row number if added
+            
+            // Convert empty strings to null
+            Object.keys(copy).forEach(key => {
+                if (copy[key] === '' || copy[key] === undefined) {
+                    copy[key] = null;
+                }
+            });
+            
+            return copy;
+        });
 
         console.log('Clean records:', cleanRecords);
 
