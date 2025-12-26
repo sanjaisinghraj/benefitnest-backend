@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { getCorporatesSchema } = require('../controllers/admin.schema.controller');
-const { verifyAdminToken } = require('../middleware/adminAuth');
 
-router.get('/corporates', verifyAdminToken, getCorporatesSchema);
+// ❗ NO extra auth here
+// ❗ admin.protected.js already protects /api/admin/*
+
+router.get('/corporates', getCorporatesSchema);
 
 module.exports = router;
