@@ -1,7 +1,7 @@
 // =====================================================
-// BENEFITNEST - MASTERS MANAGEMENT ROUTES (ENHANCED)
+// BENEFITNEST - MASTERS MANAGEMENT ROUTES (ENHANCED v2)
 // Features: AI Validation, Audit Logging, Regulatory Check,
-//           Add Field, Download Data, View Record
+//           Add Field, Download Data, View Record, Schema
 // =====================================================
 
 const express = require('express');
@@ -68,11 +68,8 @@ const logAudit = async (req, {
 // HELPER: AI VALIDATION (Pluggable Provider)
 // =====================================================
 const performAIValidation = async (table, records, validationType = 'general') => {
-    const warnings = [];
-
-    // Check which AI provider is configured
-    const provider = process.env.AI_PROVIDER || 'claude'; // claude, openai, gemini, groq
-    const apiKey = process.env.AI_API_KEY || process.env.CLAUDE_API_KEY || process.env.OPENAI_API_KEY;
+    const provider = process.env.AI_PROVIDER || 'groq';
+    const apiKey = process.env.AI_API_KEY || process.env.CLAUDE_API_KEY || process.env.OPENAI_API_KEY || process.env.GROQ_API_KEY;
 
     if (!apiKey) {
         console.log('No AI API key configured, skipping AI validation');
@@ -97,24 +94,69 @@ ${JSON.stringify(records, null, 2)}
 Return ONLY valid JSON (no markdown, no explanation):
 {"has_warnings": boolean, "warnings": [{"row": number, "field": string, "message": string, "severity": "error"|"warning"|"info", "verification_url": string|null}]}`;
         } else {
-            prompt = `Validate these ${table} records for a corporate insurance platform. Check for:
-1. Invalid/misspelled company names (insurers, TPAs, corporates)
-2. Invalid email formats
-3. Invalid phone numbers
-4. Suspicious or incorrect data
-5. Missing critical fields
-6. Invalid country/state/city names
-7. Inconsistent data (e.g., industry type doesn't match corporate type)
+            prompt = `You are a data validation AI for an insurance corporate platform. Validate these ${table} records thoroughly.
 
-Records: ${JSON.stringify(records)}
+CHECK FOR:
+1. **Insurers/TPAs**: Verify company names are real and correctly spelled (e.g., "ICIC Lombard" should be "ICICI Lombard", "HDFC Ergo" is correct)
+2. **Email formats**: Must be valid email format
+3. **Phone numbers**: Should have valid format for the country
+4. **Country/State/City**: Must be real, correctly spelled places
+5. **Codes**: Should follow standard patterns (uppercase, no spaces)
+6. **Required fields**: Flag if critical fields are empty
+7. **Data consistency**: Industry type should match corporate type, etc.
+8. **Duplicates**: Flag potential duplicate entries
 
-Return ONLY valid JSON (no markdown, no explanation):
-{"has_warnings": boolean, "warnings": [{"row": number, "field": string, "message": string, "severity": "error"|"warning"|"info"}]}`;
+Records to validate (Row numbers start from 1):
+${JSON.stringify(records.map((r, i) => ({ _row: i + 1, ...r })), null, 2)}
+
+IMPORTANT: Be strict. Flag ANY suspicious data. Real insurance companies include: ICICI Lombard, HDFC Ergo, Bajaj Allianz, Star Health, Max Bupa, Religare, New India Assurance, United India, National Insurance, Oriental Insurance, etc.
+
+Return ONLY valid JSON (no markdown, no backticks, no explanation):
+{"has_warnings": boolean, "warnings": [{"row": number, "field": string, "message": string, "severity": "error"|"warning"|"info"}]}
+
+If no issues found, return: {"has_warnings": false, "warnings": []}`;
         }
 
         let response;
+        let result;
 
-        if (provider === 'claude' || provider === 'anthropic') {
+        if (provider === 'groq') {
+            response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`
+                },
+                body: JSON.stringify({
+                    model: process.env.AI_MODEL || 'llama-3.1-70b-versatile',
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: 0.1,
+                    max_tokens: 2000
+                })
+            });
+
+            result = await response.json();
+            console.log('Groq API response status:', response.status);
+            
+            if (result.error) {
+                console.error('Groq API error:', result.error);
+                return { has_warnings: false, warnings: [] };
+            }
+
+            const content = result.choices?.[0]?.message?.content || '{"has_warnings": false, "warnings": []}';
+            console.log('Groq content:', content.substring(0, 200));
+            
+            // Clean and parse response
+            let cleanContent = content.replace(/```json|```/g, '').trim();
+            // Find JSON object in response
+            const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                cleanContent = jsonMatch[0];
+            }
+            
+            return JSON.parse(cleanContent);
+
+        } else if (provider === 'claude' || provider === 'anthropic') {
             response = await fetch('https://api.anthropic.com/v1/messages', {
                 method: 'POST',
                 headers: {
@@ -129,7 +171,7 @@ Return ONLY valid JSON (no markdown, no explanation):
                 })
             });
 
-            const result = await response.json();
+            result = await response.json();
             const content = result.content?.[0]?.text || '{"has_warnings": false, "warnings": []}';
             return JSON.parse(content.replace(/```json|```/g, '').trim());
 
@@ -143,11 +185,11 @@ Return ONLY valid JSON (no markdown, no explanation):
                 body: JSON.stringify({
                     model: process.env.AI_MODEL || 'gpt-3.5-turbo',
                     messages: [{ role: 'user', content: prompt }],
-                    temperature: 0.3
+                    temperature: 0.1
                 })
             });
 
-            const result = await response.json();
+            result = await response.json();
             const content = result.choices?.[0]?.message?.content || '{"has_warnings": false, "warnings": []}';
             return JSON.parse(content.replace(/```json|```/g, '').trim());
 
@@ -160,26 +202,8 @@ Return ONLY valid JSON (no markdown, no explanation):
                 })
             });
 
-            const result = await response.json();
+            result = await response.json();
             const content = result.candidates?.[0]?.content?.parts?.[0]?.text || '{"has_warnings": false, "warnings": []}';
-            return JSON.parse(content.replace(/```json|```/g, '').trim());
-
-        } else if (provider === 'groq') {
-            response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiKey}`
-                },
-                body: JSON.stringify({
-                    model: process.env.AI_MODEL || 'llama3-8b-8192',
-                    messages: [{ role: 'user', content: prompt }],
-                    temperature: 0.3
-                })
-            });
-
-            const result = await response.json();
-            const content = result.choices?.[0]?.message?.content || '{"has_warnings": false, "warnings": []}';
             return JSON.parse(content.replace(/```json|```/g, '').trim());
         }
 
@@ -206,7 +230,7 @@ router.get('/masters/tables', async (req, res) => {
 });
 
 // =====================================================
-// GET TABLE SCHEMA (Dynamic)
+// GET TABLE SCHEMA (Dynamic) - Enhanced with more details
 // =====================================================
 router.get('/masters/:table/schema', async (req, res) => {
     try {
@@ -224,6 +248,49 @@ router.get('/masters/:table/schema', async (req, res) => {
 });
 
 // =====================================================
+// GET DETAILED TABLE STRUCTURE (for Schema modal)
+// =====================================================
+router.get('/masters/:table/structure', async (req, res) => {
+    try {
+        const { table } = req.params;
+        
+        // Get columns with full details
+        const { data: columns, error: colError } = await supabase.rpc('get_table_schema', {
+            p_schema: 'public',
+            p_table: table
+        });
+        
+        if (colError) throw colError;
+
+        // Get primary key
+        const pk = await getPrimaryKey(table);
+
+        // Get foreign key info
+        const { data: fkData } = await supabase.rpc('get_foreign_key_references', {
+            p_table: table,
+            p_column: pk
+        });
+
+        // Get record count
+        const { count } = await supabase
+            .from(table)
+            .select('*', { count: 'exact', head: true });
+
+        res.json({
+            success: true,
+            table_name: table,
+            primary_key: pk,
+            record_count: count || 0,
+            columns: columns || [],
+            referenced_by: fkData || []
+        });
+    } catch (error) {
+        console.error('Error fetching structure:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// =====================================================
 // GET ALL RECORDS (with search fix)
 // =====================================================
 router.get('/masters/:table', async (req, res) => {
@@ -232,7 +299,7 @@ router.get('/masters/:table', async (req, res) => {
         const { page = 1, limit = 100, search = '' } = req.query;
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
-        // First get all records
+        // Fetch all records
         let query = supabase
             .from(table)
             .select('*', { count: 'exact' });
@@ -241,7 +308,7 @@ router.get('/masters/:table', async (req, res) => {
 
         if (fetchError) throw fetchError;
 
-        // Apply search filter in memory (works for all tables regardless of column names)
+        // Apply search filter in memory
         let filteredData = allData || [];
         if (search && search.trim()) {
             const searchLower = search.toLowerCase().trim();
@@ -288,7 +355,6 @@ router.get('/masters/:table/:id', async (req, res) => {
 
         if (error) throw error;
 
-        // Log view action
         await logAudit(req, {
             action_type: 'VIEW',
             target_table: table,
@@ -303,24 +369,21 @@ router.get('/masters/:table/:id', async (req, res) => {
 });
 
 // =====================================================
-// DOWNLOAD ALL DATA (for selected table)
+// DOWNLOAD ALL DATA
 // =====================================================
 router.get('/masters/:table/download/all', async (req, res) => {
     try {
         const { table } = req.params;
 
-        // Fetch ALL records (no pagination)
         const { data, error } = await supabase
             .from(table)
             .select('*');
 
         if (error) throw error;
 
-        // Log download action
         await logAudit(req, {
             action_type: 'DOWNLOAD',
             target_table: table,
-            record_id: null,
             new_values: { record_count: data?.length || 0 }
         });
 
@@ -360,9 +423,7 @@ router.get('/masters/:table/:id/dependencies', async (req, res) => {
                             count
                         });
                     }
-                } catch (e) {
-                    // Skip if table doesn't exist
-                }
+                } catch (e) { }
             }
         }
 
@@ -399,7 +460,9 @@ router.get('/masters/:table/fk-options', async (req, res) => {
                 'insurer_id': { table: 'insurers', pk: 'insurer_id', display: 'name' },
                 'broker_id': { table: 'brokers', pk: 'broker_id', display: 'name' },
                 'tpa_id': { table: 'tpas', pk: 'tpa_id', display: 'name' },
-                'account_manager_id': { table: 'account_managers', pk: 'manager_id', display: 'name' }
+                'account_manager_id': { table: 'account_managers', pk: 'manager_id', display: 'name' },
+                'corporate_type': { table: 'corporate_types', pk: 'id', display: 'name' },
+                'industry_type': { table: 'industry_types', pk: 'id', display: 'name' }
             }
         };
 
@@ -430,26 +493,67 @@ router.get('/masters/:table/fk-options', async (req, res) => {
 });
 
 // =====================================================
-// GET REGULATORY AUTHORITIES
+// GET LOOKUP DATA (for dropdowns - corporate_types, industry_types, etc.)
 // =====================================================
-router.get('/masters/regulatory/authorities', async (req, res) => {
+router.get('/masters/lookups/all', async (req, res) => {
     try {
-        const { entity_type, country } = req.query;
+        const lookups = {};
 
-        let query = supabase
-            .from('regulatory_authorities')
-            .select('*')
-            .eq('is_active', true);
+        // Corporate Types
+        const { data: corporateTypes } = await supabase
+            .from('corporate_types')
+            .select('id, name, code')
+            .eq('is_active', true)
+            .order('name');
+        lookups.corporate_types = corporateTypes || [];
 
-        if (entity_type) query = query.eq('entity_type', entity_type);
-        if (country) query = query.eq('country', country);
+        // Industry Types
+        const { data: industryTypes } = await supabase
+            .from('industry_types')
+            .select('id, name, code')
+            .eq('is_active', true)
+            .order('name');
+        lookups.industry_types = industryTypes || [];
 
-        const { data, error } = await query;
+        // Job Levels
+        const { data: jobLevels } = await supabase
+            .from('job_levels')
+            .select('id, name, code')
+            .eq('is_active', true)
+            .order('name');
+        lookups.job_levels = jobLevels || [];
 
-        if (error) throw error;
-        res.json({ success: true, data: data || [] });
+        // Insurers
+        const { data: insurers } = await supabase
+            .from('insurers')
+            .select('insurer_id, name, code')
+            .order('name');
+        lookups.insurers = insurers || [];
+
+        // TPAs
+        const { data: tpas } = await supabase
+            .from('tpas')
+            .select('tpa_id, name, code')
+            .order('name');
+        lookups.tpas = tpas || [];
+
+        // Brokers
+        const { data: brokers } = await supabase
+            .from('brokers')
+            .select('broker_id, name, code')
+            .order('name');
+        lookups.brokers = brokers || [];
+
+        // Account Managers
+        const { data: managers } = await supabase
+            .from('account_managers')
+            .select('manager_id, name, email')
+            .order('name');
+        lookups.account_managers = managers || [];
+
+        res.json({ success: true, lookups });
     } catch (error) {
-        console.error('Error fetching regulatory authorities:', error);
+        console.error('Error fetching lookups:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
@@ -465,6 +569,13 @@ router.post('/masters/:table', async (req, res) => {
 
         // Remove primary key if present
         delete record[pk];
+        
+        // Remove empty strings for non-required fields
+        Object.keys(record).forEach(key => {
+            if (record[key] === '') {
+                record[key] = null;
+            }
+        });
 
         // AI Validation (unless skipped)
         let aiResult = { has_warnings: false, warnings: [] };
@@ -487,7 +598,6 @@ router.post('/masters/:table', async (req, res) => {
 
         if (error) throw error;
 
-        // Audit log
         await logAudit(req, {
             action_type: 'ADD',
             target_table: table,
@@ -511,7 +621,7 @@ router.post('/masters/:table', async (req, res) => {
 });
 
 // =====================================================
-// BULK CREATE RECORDS
+// BULK CREATE RECORDS (FIXED)
 // =====================================================
 router.post('/masters/:table/bulk', async (req, res) => {
     try {
@@ -523,10 +633,13 @@ router.post('/masters/:table/bulk', async (req, res) => {
             return res.status(400).json({ success: false, message: 'No records provided' });
         }
 
+        console.log(`Bulk upload: ${records.length} records to ${table}`);
+
         // AI Validation
         let aiResult = { has_warnings: false, warnings: [] };
         if (!skip_ai_validation) {
             aiResult = await performAIValidation(table, records);
+            console.log('AI Validation result:', aiResult);
             if (aiResult.has_warnings && !ai_warnings_ignored) {
                 return res.status(200).json({
                     success: false,
@@ -536,26 +649,44 @@ router.post('/masters/:table/bulk', async (req, res) => {
             }
         }
 
-        // Remove primary keys
+        // Clean records - remove primary keys and empty strings
         const cleanRecords = records.map(r => {
             const copy = { ...r };
             delete copy[pk];
+            delete copy['_row']; // Remove row number if added
+            
+            // Convert empty strings to null
+            Object.keys(copy).forEach(key => {
+                if (copy[key] === '' || copy[key] === undefined) {
+                    copy[key] = null;
+                }
+            });
+            
             return copy;
         });
 
+        console.log('Clean records:', cleanRecords);
+
         const results = { success: 0, failed: 0, errors: [] };
 
+        // Insert records one by one to catch individual errors
         for (let i = 0; i < cleanRecords.length; i++) {
-            const { error } = await supabase.from(table).insert([cleanRecords[i]]);
-            if (error) {
+            try {
+                const { error } = await supabase.from(table).insert([cleanRecords[i]]);
+                if (error) {
+                    console.error(`Row ${i + 1} error:`, error.message);
+                    results.failed++;
+                    results.errors.push({ row: i + 1, error: error.message });
+                } else {
+                    results.success++;
+                }
+            } catch (e) {
+                console.error(`Row ${i + 1} exception:`, e.message);
                 results.failed++;
-                results.errors.push({ row: i + 1, error: error.message });
-            } else {
-                results.success++;
+                results.errors.push({ row: i + 1, error: e.message });
             }
         }
 
-        // Audit log
         await logAudit(req, {
             action_type: 'BULK_UPLOAD',
             target_table: table,
@@ -596,9 +727,13 @@ router.put('/masters/:table/:id', async (req, res) => {
         // Don't update primary key or timestamps
         delete updates[pk];
         delete updates.created_at;
-        if (updates.updated_at !== undefined) {
-            updates.updated_at = new Date().toISOString();
-        }
+        
+        // Convert empty strings to null
+        Object.keys(updates).forEach(key => {
+            if (updates[key] === '') {
+                updates[key] = null;
+            }
+        });
 
         // AI Validation
         let aiResult = { has_warnings: false, warnings: [] };
@@ -622,7 +757,6 @@ router.put('/masters/:table/:id', async (req, res) => {
 
         if (error) throw error;
 
-        // Audit log
         await logAudit(req, {
             action_type: 'EDIT',
             target_table: table,
@@ -654,7 +788,6 @@ router.delete('/masters/:table/:id', async (req, res) => {
         const { table, id } = req.params;
         const pk = await getPrimaryKey(table);
 
-        // Get old record for audit
         const { data: oldRecord } = await supabase
             .from(table)
             .select('*')
@@ -668,7 +801,6 @@ router.delete('/masters/:table/:id', async (req, res) => {
 
         if (error) throw error;
 
-        // Audit log
         await logAudit(req, {
             action_type: 'DELETE',
             target_table: table,
@@ -687,7 +819,7 @@ router.delete('/masters/:table/:id', async (req, res) => {
 });
 
 // =====================================================
-// AI VALIDATION ENDPOINT (Manual trigger)
+// AI VALIDATION ENDPOINT (Manual trigger for single/multiple records)
 // =====================================================
 router.post('/masters/:table/validate', async (req, res) => {
     try {
@@ -696,7 +828,6 @@ router.post('/masters/:table/validate', async (req, res) => {
 
         const result = await performAIValidation(table, records);
 
-        // Audit log
         await logAudit(req, {
             action_type: 'AI_VALIDATE',
             target_table: table,
@@ -730,32 +861,35 @@ router.post('/masters/:table/validate-all', async (req, res) => {
             return res.json({ success: true, has_warnings: false, warnings: [], message: 'No records to validate' });
         }
 
-        // Validate in batches of 20 to avoid token limits
-        const batchSize = 20;
+        console.log(`Validating ${allRecords.length} records from ${table}`);
+
+        // Validate in batches of 10 to avoid token limits
+        const batchSize = 10;
         const allWarnings = [];
 
         for (let i = 0; i < allRecords.length; i += batchSize) {
             const batch = allRecords.slice(i, i + batchSize);
+            console.log(`Validating batch ${i / batchSize + 1}, records ${i + 1} to ${Math.min(i + batchSize, allRecords.length)}`);
+            
             const result = await performAIValidation(table, batch);
             
-            if (result.warnings) {
+            if (result.warnings && result.warnings.length > 0) {
                 // Adjust row numbers for the full dataset
                 const adjustedWarnings = result.warnings.map(w => ({
                     ...w,
-                    row: w.row + i // Adjust row number based on batch offset
+                    row: (w.row || 1) + i
                 }));
                 allWarnings.push(...adjustedWarnings);
             }
         }
 
-        // Audit log
         await logAudit(req, {
             action_type: 'AI_VALIDATE',
             target_table: table,
             new_values: { total_records: allRecords.length, warnings_count: allWarnings.length },
             ai_validation_ran: true,
             ai_warnings_found: allWarnings.length > 0,
-            ai_warning_text: allWarnings.length > 0 ? JSON.stringify(allWarnings.slice(0, 50)) : null // Limit stored warnings
+            ai_warning_text: allWarnings.length > 0 ? JSON.stringify(allWarnings.slice(0, 50)) : null
         });
 
         res.json({
@@ -767,51 +901,6 @@ router.post('/masters/:table/validate-all', async (req, res) => {
     } catch (error) {
         console.error('Full table validation error:', error);
         res.status(500).json({ success: false, message: error.message });
-    }
-});
-
-// =====================================================
-// REGULATORY VALIDATION FOR SPECIFIC ENTITY
-// =====================================================
-router.post('/masters/:table/validate-regulatory', async (req, res) => {
-    try {
-        const { table } = req.params;
-        const { record, country } = req.body;
-
-        // Get regulatory authority for this entity type and country
-        let entityType = null;
-        if (table === 'insurers') entityType = 'INSURER';
-        else if (table === 'tpas') entityType = 'TPA';
-        else if (table === 'tenants') entityType = 'CORPORATE';
-
-        let authorityUrl = null;
-        if (entityType && country) {
-            const { data: authority } = await supabase
-                .from('regulatory_authorities')
-                .select('verification_url, authority_name')
-                .eq('entity_type', entityType)
-                .eq('country', country)
-                .eq('is_active', true)
-                .single();
-
-            authorityUrl = authority?.verification_url;
-        }
-
-        // Perform AI regulatory validation
-        const result = await performAIValidation(table, [{ ...record, country }], 'regulatory');
-
-        // Add verification URL to warnings
-        if (result.warnings) {
-            result.warnings = result.warnings.map(w => ({
-                ...w,
-                verification_url: w.verification_url || authorityUrl
-            }));
-        }
-
-        res.json({ success: true, ...result, regulatory_authority_url: authorityUrl });
-    } catch (error) {
-        console.error('Regulatory validation error:', error);
-        res.json({ success: true, has_warnings: false, warnings: [], regulatory_authority_url: null });
     }
 });
 
@@ -829,7 +918,6 @@ router.post('/masters/:table/add-field', async (req, res) => {
             description = null 
         } = req.body;
 
-        // Validate column name (alphanumeric and underscores only)
         if (!/^[a-z][a-z0-9_]*$/.test(column_name)) {
             return res.status(400).json({ 
                 success: false, 
@@ -837,7 +925,6 @@ router.post('/masters/:table/add-field', async (req, res) => {
             });
         }
 
-        // Map friendly types to PostgreSQL types
         const typeMap = {
             'text': 'TEXT',
             'string': 'VARCHAR(255)',
@@ -858,14 +945,11 @@ router.post('/masters/:table/add-field', async (req, res) => {
         const nullable = is_nullable ? '' : 'NOT NULL';
         const defaultClause = default_value ? `DEFAULT '${default_value}'` : '';
 
-        // Build SQL
         const sql = `ALTER TABLE public.${table} ADD COLUMN IF NOT EXISTS ${column_name} ${pgType} ${nullable} ${defaultClause}`.trim();
 
-        // Execute via RPC (requires a function in Supabase)
         const { error } = await supabase.rpc('execute_ddl', { sql_statement: sql });
 
         if (error) {
-            // If RPC doesn't exist, return the SQL for manual execution
             if (error.message.includes('function') || error.message.includes('does not exist')) {
                 return res.json({
                     success: false,
@@ -876,14 +960,12 @@ router.post('/masters/:table/add-field', async (req, res) => {
             throw error;
         }
 
-        // Add column comment if description provided
         if (description) {
             await supabase.rpc('execute_ddl', { 
                 sql_statement: `COMMENT ON COLUMN public.${table}.${column_name} IS '${description}'` 
             });
         }
 
-        // Audit log
         await logAudit(req, {
             action_type: 'ADD_FIELD',
             target_table: table,
