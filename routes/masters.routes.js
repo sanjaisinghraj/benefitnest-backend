@@ -296,6 +296,61 @@ router.get('/masters/lookups/all', async (req, res) => {
 });
 
 // =====================================================
+// GET FOREIGN KEY OPTIONS (for dropdowns)
+// =====================================================
+router.get('/masters/:table/fk-options', async (req, res) => {
+    try {
+        const { table } = req.params;
+
+        // Define FK relationships
+        const fkRelations = {
+            'tpa_locations': {
+                'tpa_id': { table: 'tpas', pk: 'tpa_id', display: 'name' }
+            },
+            'insurer_locations': {
+                'insurer_id': { table: 'insurers', pk: 'insurer_id', display: 'name' }
+            },
+            'policy_configuration': {
+                'policy_type_id': { table: 'policy_type', pk: 'id', display: 'name' }
+            },
+            'tenants': {
+                'insurer_id': { table: 'insurers', pk: 'insurer_id', display: 'name' },
+                'broker_id': { table: 'brokers', pk: 'broker_id', display: 'name' },
+                'tpa_id': { table: 'tpas', pk: 'tpa_id', display: 'name' },
+                'account_manager_id': { table: 'account_managers', pk: 'manager_id', display: 'name' },
+                'corporate_type': { table: 'corporate_types', pk: 'id', display: 'name' },
+                'industry_type': { table: 'industry_types', pk: 'id', display: 'name' }
+            }
+        };
+
+        const relations = fkRelations[table] || {};
+        const options = {};
+
+        for (const [column, config] of Object.entries(relations)) {
+            try {
+                const { data } = await supabase
+                    .from(config.table)
+                    .select(`${config.pk}, ${config.display}`)
+                    .order(config.display);
+
+                options[column] = (data || []).map(row => ({
+                    value: row[config.pk],
+                    label: row[config.display] || row[config.pk]
+                }));
+            } catch (e) {
+                options[column] = [];
+            }
+        }
+
+        res.json({ success: true, options });
+    } catch (error) {
+        console.error('Error fetching FK options:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+
+// =====================================================
 // GET TABLE SCHEMA (Dynamic) - Enhanced with more details
 // =====================================================
 router.get('/masters/:table/schema', async (req, res) => {
@@ -504,59 +559,6 @@ router.get('/masters/:table/:id/dependencies', async (req, res) => {
     }
 });
 
-// =====================================================
-// GET FOREIGN KEY OPTIONS (for dropdowns)
-// =====================================================
-router.get('/masters/:table/fk-options', async (req, res) => {
-    try {
-        const { table } = req.params;
-
-        // Define FK relationships
-        const fkRelations = {
-            'tpa_locations': {
-                'tpa_id': { table: 'tpas', pk: 'tpa_id', display: 'name' }
-            },
-            'insurer_locations': {
-                'insurer_id': { table: 'insurers', pk: 'insurer_id', display: 'name' }
-            },
-            'policy_configuration': {
-                'policy_type_id': { table: 'policy_type', pk: 'id', display: 'name' }
-            },
-            'tenants': {
-                'insurer_id': { table: 'insurers', pk: 'insurer_id', display: 'name' },
-                'broker_id': { table: 'brokers', pk: 'broker_id', display: 'name' },
-                'tpa_id': { table: 'tpas', pk: 'tpa_id', display: 'name' },
-                'account_manager_id': { table: 'account_managers', pk: 'manager_id', display: 'name' },
-                'corporate_type': { table: 'corporate_types', pk: 'id', display: 'name' },
-                'industry_type': { table: 'industry_types', pk: 'id', display: 'name' }
-            }
-        };
-
-        const relations = fkRelations[table] || {};
-        const options = {};
-
-        for (const [column, config] of Object.entries(relations)) {
-            try {
-                const { data } = await supabase
-                    .from(config.table)
-                    .select(`${config.pk}, ${config.display}`)
-                    .order(config.display);
-
-                options[column] = (data || []).map(row => ({
-                    value: row[config.pk],
-                    label: row[config.display] || row[config.pk]
-                }));
-            } catch (e) {
-                options[column] = [];
-            }
-        }
-
-        res.json({ success: true, options });
-    } catch (error) {
-        console.error('Error fetching FK options:', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
 
 
 // =====================================================
