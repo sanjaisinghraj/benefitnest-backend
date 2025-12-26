@@ -64,38 +64,21 @@ require("./db");
    ROUTES
 ========================= */
 
-
-
-
 const adminSchemaRoutes = require('./routes/admin.schema.routes');
 app.use('/api/admin/schema', adminSchemaRoutes);
 
-
 const lookupRoutes = require('./routes/lookup.public');
 app.use('/api/lookup', lookupRoutes);
-
 
 const adminPublicRoutes = require("./admin.public");
 const adminProtectedRoutes = require("./admin.protected");
 const employeeRoutes = require("./employee");
 const corporatesRoutes = require("./corporates.routes");
+const mastersRoutes = require('./routes/masters.routes');
 
 const authMiddleware = require("./auth");
 const tenantMiddleware = require("./tenant");
 const brandingMiddleware = require("./branding");
-
-const mastersRoutes = require('./routes/masters.routes');
-app.use('/api/admin', authMiddleware, mastersRoutes);
-
-/* =========================
-   LOGGING MIDDLEWARE
-========================= */
-app.use((req, res, next) => {
-  console.log('METHOD:', req.method);
-  console.log('PATH:', req.path);
-  console.log('ORIGIN:', req.headers.origin);
-  next();
-});
 
 /* =========================
    HEALTH CHECK
@@ -153,6 +136,11 @@ app.use("/api/admin", authMiddleware, adminProtectedRoutes);
    CORPORATES MANAGEMENT (WITH AUTH)
 ========================= */
 app.use("/api/admin", authMiddleware, corporatesRoutes);
+
+/* =========================
+   MASTERS MANAGEMENT (WITH AUTH)
+========================= */
+app.use("/api/admin", authMiddleware, mastersRoutes);
 
 /* =========================
    TENANT / EMPLOYEE ROUTES
