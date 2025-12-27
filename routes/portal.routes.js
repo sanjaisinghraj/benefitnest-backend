@@ -14,14 +14,40 @@ const supabase = createClient(
     process.env.SUPABASE_KEY
 );
 
-// Ensure portals directory exists
-const PORTALS_DIR = path.join(__dirname, '../portals');
-if (!fs.existsSync(PORTALS_DIR)) {
-    fs.mkdirSync(PORTALS_DIR, { recursive: true });
+// Supabase Storage bucket for portals
+const STORAGE_BUCKET = 'portals';
+
+// =====================================================
+// HELPER: Generate Portal Config (for TSX rendering)
+// =====================================================
+function generatePortalConfig(corporate) {
+    const {
+        tenant_id,
+        corporate_legal_name,
+        subdomain,
+        branding_config = {},
+        logo_url,
+        address = {},
+        contact_details = {}
+    } = corporate;
+
+    return {
+        tenant_id,
+        company_name: corporate_legal_name,
+        subdomain,
+        logo_url: logo_url || null,
+        primary_color: branding_config.primary_color || '#2563eb',
+        secondary_color: branding_config.secondary_color || '#10b981',
+        address,
+        contact_email: contact_details.email || null,
+        contact_phone: contact_details.phone || null,
+        status: 'active',
+        created_at: corporate.portal_created_at || new Date().toISOString()
+    };
 }
 
 // =====================================================
-// HELPER: Generate Portal HTML with Branding
+// HELPER: Generate Portal HTML with Branding (deprecated - kept for reference)
 // =====================================================
 function generatePortalHTML(corporate) {
     const {
@@ -113,8 +139,14 @@ router.get('/admin/corporates/:tenantId/check-portal', async (req, res) => {
             return res.status(404).json({ success: false, message: 'Corporate not found' });
         }
 
-        const portalPath = path.join(PORTALS_DIR, `${corporate.subdomain}.html`);
-        const portalExists = fs.existsSync(portalPath);
+        const portalFileName = `${corporate.subdomain}.html`;
+        
+        // Check if file exists in Supabase Storage
+        const { data: files, error: listError } = await supabase.storage
+            .from(STORAGE_BUCKET)
+            .list();
+
+        const portalExists = files && files.some(file => file.name === portalFileName);
         const portalUrl = `https://${corporate.subdomain}.benefitnest.space`;
 
         res.json({
@@ -126,7 +158,7 @@ router.get('/admin/corporates/:tenantId/check-portal', async (req, res) => {
             }
         });
     } catch (err) {
-        console.error('[PORTAL] Error:', err);
+        console.error('[PORTAL] Error checking portal:', err);
         res.status(500).json({ success: false, message: 'Failed to check portal' });
     }
 });
@@ -149,27 +181,33 @@ router.post('/admin/corporates/:tenantId/create-portal', async (req, res) => {
             return res.status(404).json({ success: false, message: 'Corporate not found' });
         }
 
-        const portalPath = path.join(PORTALS_DIR, `${corporate.subdomain}.html`);
-
-        // Check if already exists
-        if (fs.existsSync(portalPath)) {
+        // Check if portal already exists
+        if (corporate.portal_created_at) {
             console.log(`[PORTAL] Portal already exists`);
             return res.json({
                 success: true,
-                data: { portal_url: `https://${corporate.subdomain}.benefitnest.space`, message: 'Portal already exists' }
+                data: { 
+                    portal_url: `https://${corporate.subdomain}.benefitnest.space`,
+                    message: 'Portal already exists' 
+                }
             });
         }
 
-        // Generate and save portal
-        const portalHTML = generatePortalHTML(corporate);
-        fs.writeFileSync(portalPath, portalHTML, 'utf8');
-        console.log(`[PORTAL] Portal created at: ${portalPath}`);
-
-        // Update database
-        await supabase
+        // Update database with portal creation timestamp
+        // Portal config is fetched from corporate record when needed
+        const { error: updateError } = await supabase
             .from('tenants')
-            .update({ portal_created_at: new Date().toISOString() })
+            .update({ 
+                portal_created_at: new Date().toISOString()
+            })
             .eq('tenant_id', tenantId);
+
+        if (updateError) {
+            console.error('[PORTAL] Update error:', updateError);
+            return res.status(500).json({ success: false, message: 'Failed to create portal' });
+        }
+
+        console.log(`[PORTAL] Portal created for: ${corporate.subdomain}`);
 
         // Log activity
         await supabase.from('corporate_activity_log').insert({
@@ -187,7 +225,7 @@ router.post('/admin/corporates/:tenantId/create-portal', async (req, res) => {
             }
         });
     } catch (err) {
-        console.error('[PORTAL] Error:', err);
+        console.error('[PORTAL] Error creating portal:', err);
         res.status(500).json({ success: false, message: 'Failed to create portal' });
     }
 });
@@ -429,9 +467,167 @@ module.exports = router;
 
 
 // =====================================================
-// USAGE: Add to your main app.js or server.js
+// GET PORTAL CONFIG BY SUBDOMAIN (Public - for TSX frontend)
+// =====================================================
+router.get('/portal/config/:subdomain', async (req, res) => {
+    try {
+        const { subdomain } = req.params;
+        console.log(`[PORTAL] Fetching config for subdomain: ${subdomain}`);
+
+        // Get corporate by subdomain
+        const { data: corporate, error } = await supabase
+            .from('tenants')
+            .select('*')
+            .eq('subdomain', subdomain)
+            .eq('status', 'active')
+            .single();
+
+        if (error || !corporate) {
+            return res.status(404).json({ success: false, message: 'Portal not found' });
+        }
+
+        // Check if portal was created
+        if (!corporate.portal_created_at) {
+            return res.status(404).json({ success: false, message: 'Portal not created yet' });
+        }
+
+        // Return portal config
+        const portalConfig = generatePortalConfig(corporate);
+        
+        // Fetch customizations for this corporate
+        const { data: customizations } = await supabase
+            .from('portal_customizations')
+            .select('*')
+            .eq('tenant_id', corporate.tenant_id)
+            .eq('is_active', true)
+            .single();
+
+        // Merge customizations if they exist
+        const finalConfig = customizations 
+            ? { ...portalConfig, customizations }
+            : { ...portalConfig, customizations: null };
+        
+        res.json({
+            success: true,
+            data: finalConfig
+        });
+    } catch (err) {
+        console.error('[PORTAL] Error fetching config:', err);
+        res.status(500).json({ success: false, message: 'Failed to fetch portal config' });
+    }
+});
+
+// =====================================================
+// UPDATE PORTAL CUSTOMIZATIONS (Protected - Admin only)
+// =====================================================
+router.post('/admin/corporates/:tenantId/customize-portal', async (req, res) => {
+    try {
+        const { tenantId } = req.params;
+        const customizationData = req.body;
+        
+        console.log(`[PORTAL] Updating customizations for tenant: ${tenantId}`);
+
+        // Get existing customization
+        const { data: existingCustom } = await supabase
+            .from('portal_customizations')
+            .select('id, version')
+            .eq('tenant_id', tenantId)
+            .eq('is_active', true)
+            .single();
+
+        let result;
+
+        if (existingCustom) {
+            const newVersion = existingCustom.version + 1;
+            
+            // Deactivate old version
+            await supabase
+                .from('portal_customizations')
+                .update({ is_active: false })
+                .eq('id', existingCustom.id);
+
+            // Create new version
+            const { data: newCustom, error: createError } = await supabase
+                .from('portal_customizations')
+                .insert({
+                    tenant_id: tenantId,
+                    version: newVersion,
+                    is_active: true,
+                    ...customizationData
+                })
+                .select()
+                .single();
+
+            if (createError) throw createError;
+            result = newCustom;
+        } else {
+            // Create new customization
+            const { data: newCustom, error: createError } = await supabase
+                .from('portal_customizations')
+                .insert({
+                    tenant_id: tenantId,
+                    version: 1,
+                    is_active: true,
+                    ...customizationData
+                })
+                .select()
+                .single();
+
+            if (createError) throw createError;
+            result = newCustom;
+        }
+
+        res.json({
+            success: true,
+            data: {
+                customization_id: result.id,
+                version: result.version,
+                message: 'Portal customization updated successfully'
+            }
+        });
+    } catch (err) {
+        console.error('[PORTAL] Customization error:', err);
+        res.status(500).json({ success: false, message: 'Failed to update customization' });
+    }
+});
+
+// =====================================================
+// GET PORTAL CUSTOMIZATIONS (Admin - for editor)
+// =====================================================
+router.get('/admin/corporates/:tenantId/customizations', async (req, res) => {
+    try {
+        const { tenantId } = req.params;
+
+        const { data: customizations } = await supabase
+            .from('portal_customizations')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .eq('is_active', true)
+            .single();
+
+        if (!customizations) {
+            return res.json({
+                success: true,
+                data: null,
+                message: 'No customizations found - using defaults'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: customizations
+        });
+    } catch (err) {
+        console.error('[PORTAL] Error fetching customizations:', err);
+        res.status(500).json({ success: false, message: 'Failed to fetch customizations' });
+    }
+});
+
+// =====================================================
 // =====================================================
 /*
 const portalRoutes = require('./routes/portal.routes');
 app.use('/api', portalRoutes);
 */
+
+module.exports = router;
