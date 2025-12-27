@@ -125,7 +125,7 @@ app.get("/api/admin/corporates/test", async (req, res) => {
 /* =========================
    ADMIN PUBLIC ROUTES (NO AUTH)
 ========================= */
-app.use('/api/admin/tenant-ui-config', require('./routes/tenant-ui-config.routes'));
+
 
 
 app.use("/api/admin", adminPublicRoutes);
