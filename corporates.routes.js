@@ -1,7 +1,7 @@
 // =====================================================
-// BENEFITNEST - CORPORATE MANAGEMENT ROUTES (ENHANCED)
+// BENEFITNEST - CORPORATE MANAGEMENT ROUTES (FIXED)
 // File: corporates.routes.js
-// Description: Comprehensive API for enterprise-grade corporate management
+// Description: API for corporate management - UPDATED to remove deleted columns
 // =====================================================
 
 const express = require('express');
@@ -18,18 +18,14 @@ const supabase = createClient(
 // HELPER FUNCTIONS
 // =====================================================
 
-// Sanitize and validate inputs
 const sanitizeString = (str) => str?.toString().trim() || null;
 const sanitizeCode = (str) => str?.toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || null;
 const sanitizeSubdomain = (str) => str?.toString().trim().toLowerCase().replace(/[^a-z0-9]/g, '') || null;
 
-// Build dynamic filter query
+// Build dynamic filter query - FIXED: removed deleted columns
 const applyFilters = (query, filters) => {
     if (filters.status) {
         query = query.eq('status', filters.status);
-    }
-    if (filters.onboarding_status) {
-        query = query.eq('onboarding_status', filters.onboarding_status);
     }
     if (filters.industry_type) {
         query = query.eq('industry_type', filters.industry_type);
@@ -40,26 +36,15 @@ const applyFilters = (query, filters) => {
     if (filters.broker_id) {
         query = query.eq('broker_id', filters.broker_id);
     }
-    if (filters.account_manager_id) {
-        query = query.eq('account_manager_id', filters.account_manager_id);
+    if (filters.tags && filters.tags.length > 0) {
+        query = query.overlaps('tags', filters.tags);
     }
-    if (filters.is_favorite !== undefined) {
-        query = query.eq('is_favorite', filters.is_favorite === 'true');
-    }
-    if (filters.health_score_min) {
-        query = query.gte('health_score', parseInt(filters.health_score_min));
-    }
-    if (filters.health_score_max) {
-        query = query.lte('health_score', parseInt(filters.health_score_max));
-    }
+    // Contract expiring filter
     if (filters.contract_expiring_days) {
         const expiryDate = new Date();
         expiryDate.setDate(expiryDate.getDate() + parseInt(filters.contract_expiring_days));
         query = query.lte('contract_end_date', expiryDate.toISOString().split('T')[0]);
         query = query.gte('contract_end_date', new Date().toISOString().split('T')[0]);
-    }
-    if (filters.tags && filters.tags.length > 0) {
-        query = query.overlaps('tags', filters.tags);
     }
     return query;
 };
@@ -85,78 +70,59 @@ const logActivity = async (tenantId, activityType, description, extras = {}) => 
 };
 
 // =====================================================
-// GET ALL CORPORATES (with advanced filtering & pagination)
+// GET ALL CORPORATES (FIXED - removed deleted columns)
 // =====================================================
 router.get('/corporates', async (req, res) => {
     try {
         const {
-            // Pagination
             page = 1,
             limit = 1000,
-            
-            // Sorting
             sort_by = 'created_at',
             sort_order = 'desc',
-            
-            // Search
             search = '',
-            
-            // Filters
             status,
-            onboarding_status,
             industry_type,
             corporate_type,
             broker_id,
-            account_manager_id,
-            is_favorite,
-            health_score_min,
-            health_score_max,
             contract_expiring_days,
             tags,
-            
-            // View type
-            view = 'list' // list, kanban, stats
+            view = 'list'
         } = req.query;
 
         const offset = (parseInt(page) - 1) * parseInt(limit);
         
-        // Build base query
+        // FIXED: Removed account_manager join (column deleted)
         let query = supabase
             .from('tenants')
             .select(`
                 *,
-                broker:brokers(broker_id, broker_name, broker_code),
-                account_manager:account_managers(manager_id, full_name, email)
+                broker:brokers(broker_id, broker_name, broker_code)
             `, { count: 'exact' });
 
-        // Apply search
+        // FIXED: Removed corporate_group_name from search (column deleted)
         if (search) {
-            query = query.or(`
-                tenant_code.ilike.%${search}%,
-                subdomain.ilike.%${search}%,
-                corporate_legal_name.ilike.%${search}%,
-                corporate_group_name.ilike.%${search}%,
-                industry_type.ilike.%${search}%
-            `);
+            query = query.or(`tenant_code.ilike.%${search}%,subdomain.ilike.%${search}%,corporate_legal_name.ilike.%${search}%,industry_type.ilike.%${search}%`);
         }
 
-        // Apply filters
+        // Apply filters - FIXED: removed deleted column filters
         const filters = {
-            status, onboarding_status, industry_type, corporate_type,
-            broker_id, account_manager_id, is_favorite, health_score_min,
-            health_score_max, contract_expiring_days, tags: tags ? tags.split(',') : null
+            status, 
+            industry_type, 
+            corporate_type,
+            broker_id, 
+            contract_expiring_days,
+            tags: tags ? tags.split(',') : null
         };
         query = applyFilters(query, filters);
 
-        // Apply sorting
+        // FIXED: Removed employee_count and total_premium from valid sort fields
         const validSortFields = [
             'created_at', 'corporate_legal_name', 'tenant_code', 'status',
-            'health_score', 'employee_count', 'contract_end_date', 'total_premium'
+            'health_score', 'contract_end_date'
         ];
         const sortField = validSortFields.includes(sort_by) ? sort_by : 'created_at';
         query = query.order(sortField, { ascending: sort_order === 'asc' });
 
-        // Apply pagination
         query = query.range(offset, offset + parseInt(limit) - 1);
 
         const { data, error, count } = await query;
@@ -170,7 +136,6 @@ router.get('/corporates', async (req, res) => {
             });
         }
 
-        // Calculate pagination info
         const totalPages = Math.ceil(count / parseInt(limit));
 
         res.json({
@@ -197,49 +162,25 @@ router.get('/corporates', async (req, res) => {
 });
 
 // =====================================================
-// GET CORPORATE STATISTICS (Dashboard)
+// GET CORPORATE STATISTICS (FIXED)
 // =====================================================
 router.get('/corporates/statistics', async (req, res) => {
     try {
-        const { broker_id, account_manager_id } = req.query;
-
-        // Build filter conditions
-        let filterConditions = '';
-        if (broker_id) filterConditions += ` AND broker_id = '${broker_id}'`;
-        if (account_manager_id) filterConditions += ` AND account_manager_id = '${account_manager_id}'`;
+        const { broker_id } = req.query;
 
         // Get counts by status
-        const { data: statusCounts } = await supabase
-            .from('tenants')
-            .select('status', { count: 'exact' })
-            .then(async () => {
-                const statuses = ['ACTIVE', 'INACTIVE', 'ON_HOLD'];
-                const counts = {};
-                for (const status of statuses) {
-                    let query = supabase.from('tenants').select('*', { count: 'exact', head: true }).eq('status', status);
-                    if (broker_id) query = query.eq('broker_id', broker_id);
-                    if (account_manager_id) query = query.eq('account_manager_id', account_manager_id);
-                    const { count } = await query;
-                    counts[status] = count || 0;
-                }
-                return { data: counts };
-            });
-
-        // Get counts by onboarding status
-        const onboardingStatuses = ['LEAD', 'PROSPECT', 'PROPOSAL_SENT', 'NEGOTIATION', 'ONBOARDING', 'ACTIVE', 'ON_HOLD', 'CHURNED'];
-        const onboardingCounts = {};
-        for (const status of onboardingStatuses) {
-            let query = supabase.from('tenants').select('*', { count: 'exact', head: true }).eq('onboarding_status', status);
+        const statuses = ['ACTIVE', 'INACTIVE', 'ON_HOLD'];
+        const statusCounts = {};
+        for (const status of statuses) {
+            let query = supabase.from('tenants').select('*', { count: 'exact', head: true }).eq('status', status);
             if (broker_id) query = query.eq('broker_id', broker_id);
-            if (account_manager_id) query = query.eq('account_manager_id', account_manager_id);
             const { count } = await query;
-            onboardingCounts[status] = count || 0;
+            statusCounts[status] = count || 0;
         }
 
         // Get total count
         let totalQuery = supabase.from('tenants').select('*', { count: 'exact', head: true });
         if (broker_id) totalQuery = totalQuery.eq('broker_id', broker_id);
-        if (account_manager_id) totalQuery = totalQuery.eq('account_manager_id', account_manager_id);
         const { count: totalCount } = await totalQuery;
 
         // Get contracts expiring soon (next 90 days)
@@ -250,7 +191,6 @@ router.get('/corporates/statistics', async (req, res) => {
             .lte('contract_end_date', expiryDate.toISOString().split('T')[0])
             .gte('contract_end_date', new Date().toISOString().split('T')[0]);
         if (broker_id) expiringQuery = expiringQuery.eq('broker_id', broker_id);
-        if (account_manager_id) expiringQuery = expiringQuery.eq('account_manager_id', account_manager_id);
         const { count: expiringCount } = await expiringQuery;
 
         // Get health score distribution
@@ -267,26 +207,17 @@ router.get('/corporates/statistics', async (req, res) => {
                 .gte('health_score', range.min)
                 .lte('health_score', range.max);
             if (broker_id) query = query.eq('broker_id', broker_id);
-            if (account_manager_id) query = query.eq('account_manager_id', account_manager_id);
             const { count } = await query;
             healthDistribution.push({ ...range, count: count || 0 });
         }
-
-        // Get favorites count
-        let favQuery = supabase.from('tenants').select('*', { count: 'exact', head: true }).eq('is_favorite', true);
-        if (broker_id) favQuery = favQuery.eq('broker_id', broker_id);
-        if (account_manager_id) favQuery = favQuery.eq('account_manager_id', account_manager_id);
-        const { count: favoritesCount } = await favQuery;
 
         res.json({
             success: true,
             data: {
                 total: totalCount || 0,
-                by_status: statusCounts?.data || {},
-                by_onboarding_status: onboardingCounts,
+                by_status: statusCounts,
                 expiring_soon: expiringCount || 0,
-                health_distribution: healthDistribution,
-                favorites: favoritesCount || 0
+                health_distribution: healthDistribution
             }
         });
 
@@ -301,21 +232,19 @@ router.get('/corporates/statistics', async (req, res) => {
 });
 
 // =====================================================
-// GET SINGLE CORPORATE (with full details)
+// GET SINGLE CORPORATE (FIXED - removed deleted joins)
 // =====================================================
 router.get('/corporates/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { include } = req.query; // contacts, documents, contracts, notes, activity
+        const { include } = req.query;
 
-        // Get corporate basic details
+        // FIXED: Removed account_manager and parent joins (columns deleted)
         const { data: corporate, error } = await supabase
             .from('tenants')
             .select(`
                 *,
-                broker:brokers(broker_id, broker_name, broker_code, logo_url),
-                account_manager:account_managers(manager_id, full_name, email, phone, designation),
-                parent:tenants!parent_tenant_id(tenant_id, tenant_code, corporate_legal_name)
+                broker:brokers(broker_id, broker_name, broker_code, logo_url)
             `)
             .eq('tenant_id', id)
             .single();
@@ -328,10 +257,7 @@ router.get('/corporates/:id', async (req, res) => {
             });
         }
 
-        // Prepare response
         const response = { ...corporate };
-
-        // Include additional data based on request
         const includes = include ? include.split(',') : [];
 
         if (includes.includes('contacts') || includes.includes('all')) {
@@ -395,7 +321,6 @@ router.get('/corporates/:id', async (req, res) => {
         }
 
         if (includes.includes('stats') || includes.includes('all')) {
-            // Get employee stats
             const { count: employeeCount } = await supabase
                 .from('employees')
                 .select('*', { count: 'exact', head: true })
@@ -442,53 +367,27 @@ router.get('/corporates/:id', async (req, res) => {
 });
 
 // =====================================================
-// CREATE CORPORATE
+// CREATE CORPORATE (FIXED - removed deleted columns)
 // =====================================================
 router.post('/corporates', async (req, res) => {
     try {
         const {
-            // Required fields
             tenant_code,
             subdomain,
             corporate_legal_name,
-            
-            // Basic info
-            corporate_group_name,
             corporate_type,
             industry_type,
-            
-            // Hierarchy
-            parent_tenant_id,
-            
-            // Relationships
             broker_id,
-            account_manager_id,
-            
-            // Address
             address,
-            
-            // Registration
+            contact_details,
             registration_details,
-            
-            // Contract
             contract_start_date,
             contract_end_date,
             contract_value,
-            billing_cycle,
-            payment_terms,
-            
-            // Contacts (will be inserted separately)
-            contacts,
-            
-            // Branding
             branding_config,
-            
-            // Optional
-            lead_source,
-            referral_code,
-            campaign_id,
             tags,
-            internal_notes
+            internal_notes,
+            country
         } = req.body;
 
         // Validation
@@ -499,12 +398,8 @@ router.post('/corporates', async (req, res) => {
             });
         }
 
-        // Sanitize
         const cleanCode = sanitizeCode(tenant_code);
         const cleanSubdomain = sanitizeSubdomain(subdomain);
-
-        // Generate schema name
-        const schema_name = `tenant_${cleanSubdomain}`;
 
         // Check for duplicates
         const { data: existing } = await supabase
@@ -520,38 +415,29 @@ router.post('/corporates', async (req, res) => {
             });
         }
 
-        // Prepare corporate data
+        // FIXED: Only include columns that exist in the table
         const corporateData = {
             tenant_code: cleanCode,
             subdomain: cleanSubdomain,
-            schema_name,
             corporate_legal_name: sanitizeString(corporate_legal_name),
-            corporate_group_name: sanitizeString(corporate_group_name),
             corporate_type: sanitizeString(corporate_type),
             industry_type: sanitizeString(industry_type),
-            parent_tenant_id: parent_tenant_id || null,
             broker_id: broker_id || null,
-            account_manager_id: account_manager_id || null,
             address: address || null,
+            contact_details: contact_details || null,
             registration_details: registration_details || null,
             contract_start_date: contract_start_date || null,
             contract_end_date: contract_end_date || null,
             contract_value: contract_value || null,
-            billing_cycle: billing_cycle || 'ANNUAL',
-            payment_terms: payment_terms || 30,
             branding_config: branding_config || null,
-            lead_source: sanitizeString(lead_source),
-            referral_code: sanitizeString(referral_code),
-            campaign_id: sanitizeString(campaign_id),
             tags: tags || [],
             internal_notes: sanitizeString(internal_notes),
+            country: country || 'India',
             status: 'ACTIVE',
-            onboarding_status: 'PROSPECT',
             health_score: 100,
             created_by: req.user?.user_id || null
         };
 
-        // Insert corporate
         const { data: corporate, error } = await supabase
             .from('tenants')
             .insert([corporateData])
@@ -565,35 +451,6 @@ router.post('/corporates', async (req, res) => {
                 message: 'Failed to create corporate',
                 error: error.message
             });
-        }
-
-        // Insert contacts if provided
-        if (contacts && Array.isArray(contacts) && contacts.length > 0) {
-            const contactsData = contacts
-                .filter(c => c.full_name && c.email)
-                .map((c, index) => ({
-                    tenant_id: corporate.tenant_id,
-                    full_name: sanitizeString(c.full_name),
-                    email: sanitizeString(c.email),
-                    phone: sanitizeString(c.phone),
-                    mobile: sanitizeString(c.mobile),
-                    designation: sanitizeString(c.designation),
-                    department: sanitizeString(c.department),
-                    job_level: sanitizeString(c.job_level),
-                    contact_role: c.contact_role || 'GENERAL',
-                    is_primary: index === 0,
-                    is_decision_maker: c.is_decision_maker || false,
-                    can_approve_claims: c.can_approve_claims || false,
-                    can_manage_employees: c.can_manage_employees || false,
-                    can_view_reports: c.can_view_reports || false,
-                    can_manage_billing: c.can_manage_billing || false,
-                    preferred_channel: c.preferred_channel || 'EMAIL',
-                    status: 'ACTIVE'
-                }));
-
-            if (contactsData.length > 0) {
-                await supabase.from('corporate_contacts').insert(contactsData);
-            }
         }
 
         // Log activity
@@ -625,14 +482,13 @@ router.post('/corporates', async (req, res) => {
 });
 
 // =====================================================
-// UPDATE CORPORATE
+// UPDATE CORPORATE (FIXED - removed deleted columns)
 // =====================================================
 router.put('/corporates/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const updateData = req.body;
 
-        // Get current data for activity log
         const { data: current } = await supabase
             .from('tenants')
             .select('*')
@@ -646,30 +502,32 @@ router.put('/corporates/:id', async (req, res) => {
             });
         }
 
-        // Fields that can be updated
+        // FIXED: Only include columns that exist in the table
         const allowedFields = [
-            'corporate_legal_name', 'corporate_group_name', 'corporate_type', 'industry_type',
-            'parent_tenant_id', 'broker_id', 'account_manager_id',
-            'address', 'registration_details', 'branding_config',
-            'contract_start_date', 'contract_end_date', 'contract_value', 'billing_cycle', 'payment_terms',
-            'portal_url', 'portal_status', 'portal_settings',
-            'onboarding_status', 'onboarding_checklist',
-            'renewal_reminder_days', 'renewal_status',
-            'communication_preferences',
-            'is_favorite', 'tags', 'internal_notes', 'custom_fields',
-            'status'
+            'corporate_legal_name', 'corporate_type', 'industry_type',
+            'broker_id', 'address', 'contact_details', 'registration_details', 
+            'branding_config', 'contract_start_date', 'contract_end_date', 
+            'contract_value', 'portal_url', 'compliance_status',
+            'health_score', 'health_factors', 'tags', 'internal_notes',
+            'status', 'country'
         ];
 
-        // Build update object
         const updates = {};
         for (const field of allowedFields) {
             if (updateData[field] !== undefined) {
                 updates[field] = updateData[field];
             }
         }
-        updates.updated_by = req.user?.user_id || null;
 
-        // Update corporate
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No valid fields to update'
+            });
+        }
+
+        updates.updated_at = new Date().toISOString();
+
         const { data: corporate, error } = await supabase
             .from('tenants')
             .update(updates)
@@ -717,248 +575,27 @@ router.put('/corporates/:id', async (req, res) => {
 });
 
 // =====================================================
-// UPDATE CORPORATE STATUS
-// =====================================================
-router.patch('/corporates/:id/status', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status, reason } = req.body;
-
-        const validStatuses = ['ACTIVE', 'INACTIVE', 'ON_HOLD', 'SUSPENDED'];
-        if (!validStatuses.includes(status)) {
-            return res.status(400).json({
-                success: false,
-                message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
-            });
-        }
-
-        const { data: corporate, error } = await supabase
-            .from('tenants')
-            .update({ 
-                status,
-                updated_by: req.user?.user_id 
-            })
-            .eq('tenant_id', id)
-            .select()
-            .single();
-
-        if (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to update status',
-                error: error.message
-            });
-        }
-
-        // Log activity
-        await logActivity(
-            id,
-            'STATUS_CHANGED',
-            `Status changed to ${status}${reason ? ': ' + reason : ''}`,
-            {
-                new_values: { status, reason },
-                performed_by: req.user?.user_id,
-                performed_by_type: 'ADMIN'
-            }
-        );
-
-        res.json({
-            success: true,
-            message: 'Status updated successfully',
-            data: corporate
-        });
-
-    } catch (error) {
-        console.error('Error in PATCH /corporates/:id/status:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error',
-            error: error.message
-        });
-    }
-});
-
-// =====================================================
-// UPDATE ONBOARDING STATUS
-// =====================================================
-router.patch('/corporates/:id/onboarding-status', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { onboarding_status, notes } = req.body;
-
-        const validStatuses = ['LEAD', 'PROSPECT', 'PROPOSAL_SENT', 'NEGOTIATION', 'ONBOARDING', 'ACTIVE', 'ON_HOLD', 'CHURNED'];
-        if (!validStatuses.includes(onboarding_status)) {
-            return res.status(400).json({
-                success: false,
-                message: `Invalid onboarding status. Must be one of: ${validStatuses.join(', ')}`
-            });
-        }
-
-        const updates = {
-            onboarding_status,
-            updated_by: req.user?.user_id
-        };
-
-        // Set timestamps based on status
-        if (onboarding_status === 'ONBOARDING') {
-            updates.onboarding_started_at = new Date().toISOString();
-        } else if (onboarding_status === 'ACTIVE') {
-            updates.onboarding_completed_at = new Date().toISOString();
-            updates.status = 'ACTIVE';
-        }
-
-        const { data: corporate, error } = await supabase
-            .from('tenants')
-            .update(updates)
-            .eq('tenant_id', id)
-            .select()
-            .single();
-
-        if (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to update onboarding status',
-                error: error.message
-            });
-        }
-
-        // Log activity
-        await logActivity(
-            id,
-            'ONBOARDING_STATUS_CHANGED',
-            `Onboarding status changed to ${onboarding_status}${notes ? ': ' + notes : ''}`,
-            {
-                new_values: { onboarding_status, notes },
-                performed_by: req.user?.user_id,
-                performed_by_type: 'ADMIN'
-            }
-        );
-
-        res.json({
-            success: true,
-            message: 'Onboarding status updated successfully',
-            data: corporate
-        });
-
-    } catch (error) {
-        console.error('Error in PATCH /corporates/:id/onboarding-status:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error',
-            error: error.message
-        });
-    }
-});
-
-// =====================================================
-// TOGGLE FAVORITE
-// =====================================================
-router.patch('/corporates/:id/favorite', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { is_favorite } = req.body;
-
-        const { data: corporate, error } = await supabase
-            .from('tenants')
-            .update({ is_favorite: !!is_favorite })
-            .eq('tenant_id', id)
-            .select()
-            .single();
-
-        if (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to update favorite',
-                error: error.message
-            });
-        }
-
-        res.json({
-            success: true,
-            message: is_favorite ? 'Added to favorites' : 'Removed from favorites',
-            data: corporate
-        });
-
-    } catch (error) {
-        console.error('Error in PATCH /corporates/:id/favorite:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error',
-            error: error.message
-        });
-    }
-});
-
-// =====================================================
-// UPDATE TAGS
-// =====================================================
-router.patch('/corporates/:id/tags', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { tags, action = 'set' } = req.body; // action: set, add, remove
-
-        let newTags;
-
-        if (action === 'set') {
-            newTags = tags || [];
-        } else {
-            // Get current tags
-            const { data: current } = await supabase
-                .from('tenants')
-                .select('tags')
-                .eq('tenant_id', id)
-                .single();
-
-            const currentTags = current?.tags || [];
-
-            if (action === 'add') {
-                newTags = [...new Set([...currentTags, ...tags])];
-            } else if (action === 'remove') {
-                newTags = currentTags.filter(t => !tags.includes(t));
-            }
-        }
-
-        const { data: corporate, error } = await supabase
-            .from('tenants')
-            .update({ tags: newTags })
-            .eq('tenant_id', id)
-            .select()
-            .single();
-
-        if (error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Failed to update tags',
-                error: error.message
-            });
-        }
-
-        res.json({
-            success: true,
-            message: 'Tags updated successfully',
-            data: corporate
-        });
-
-    } catch (error) {
-        console.error('Error in PATCH /corporates/:id/tags:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error',
-            error: error.message
-        });
-    }
-});
-
-// =====================================================
-// DELETE CORPORATE (Soft delete)
+// DELETE CORPORATE
 // =====================================================
 router.delete('/corporates/:id', async (req, res) => {
     try {
         const { id } = req.params;
         const { hard_delete = false } = req.query;
 
+        const { data: corporate } = await supabase
+            .from('tenants')
+            .select('tenant_id, corporate_legal_name')
+            .eq('tenant_id', id)
+            .single();
+
+        if (!corporate) {
+            return res.status(404).json({
+                success: false,
+                message: 'Corporate not found'
+            });
+        }
+
         if (hard_delete === 'true') {
-            // Hard delete (be careful!)
             const { error } = await supabase
                 .from('tenants')
                 .delete()
@@ -972,16 +609,10 @@ router.delete('/corporates/:id', async (req, res) => {
                 });
             }
         } else {
-            // Soft delete
-            const { data: corporate, error } = await supabase
+            const { error } = await supabase
                 .from('tenants')
-                .update({ 
-                    status: 'INACTIVE',
-                    updated_by: req.user?.user_id
-                })
-                .eq('tenant_id', id)
-                .select()
-                .single();
+                .update({ status: 'DELETED', updated_at: new Date().toISOString() })
+                .eq('tenant_id', id);
 
             if (error) {
                 return res.status(500).json({
@@ -990,18 +621,18 @@ router.delete('/corporates/:id', async (req, res) => {
                     error: error.message
                 });
             }
-
-            // Log activity
-            await logActivity(
-                id,
-                'DELETED',
-                'Corporate deactivated (soft delete)',
-                {
-                    performed_by: req.user?.user_id,
-                    performed_by_type: 'ADMIN'
-                }
-            );
         }
+
+        await logActivity(
+            id,
+            'DELETED',
+            `Corporate "${corporate.corporate_legal_name}" deleted`,
+            {
+                performed_by: req.user?.user_id,
+                performed_by_type: 'ADMIN',
+                ip_address: req.ip
+            }
+        );
 
         res.json({
             success: true,
@@ -1019,110 +650,26 @@ router.delete('/corporates/:id', async (req, res) => {
 });
 
 // =====================================================
-// BULK OPERATIONS
-// =====================================================
-router.post('/corporates/bulk', async (req, res) => {
-    try {
-        const { action, ids, data } = req.body;
-
-        if (!ids || !Array.isArray(ids) || ids.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: 'No corporate IDs provided'
-            });
-        }
-
-        let result;
-
-        switch (action) {
-            case 'update_status':
-                result = await supabase
-                    .from('tenants')
-                    .update({ status: data.status })
-                    .in('tenant_id', ids);
-                break;
-
-            case 'assign_account_manager':
-                result = await supabase
-                    .from('tenants')
-                    .update({ account_manager_id: data.account_manager_id })
-                    .in('tenant_id', ids);
-                break;
-
-            case 'assign_broker':
-                result = await supabase
-                    .from('tenants')
-                    .update({ broker_id: data.broker_id })
-                    .in('tenant_id', ids);
-                break;
-
-            case 'add_tags':
-                // This requires fetching current tags first
-                for (const id of ids) {
-                    const { data: current } = await supabase
-                        .from('tenants')
-                        .select('tags')
-                        .eq('tenant_id', id)
-                        .single();
-                    const newTags = [...new Set([...(current?.tags || []), ...data.tags])];
-                    await supabase.from('tenants').update({ tags: newTags }).eq('tenant_id', id);
-                }
-                result = { error: null };
-                break;
-
-            case 'delete':
-                result = await supabase
-                    .from('tenants')
-                    .update({ status: 'INACTIVE' })
-                    .in('tenant_id', ids);
-                break;
-
-            default:
-                return res.status(400).json({
-                    success: false,
-                    message: 'Invalid bulk action'
-                });
-        }
-
-        if (result.error) {
-            return res.status(500).json({
-                success: false,
-                message: 'Bulk operation failed',
-                error: result.error.message
-            });
-        }
-
-        res.json({
-            success: true,
-            message: `Bulk ${action} completed for ${ids.length} corporates`
-        });
-
-    } catch (error) {
-        console.error('Error in POST /corporates/bulk:', error);
-        res.status(500).json({
-            success: false,
-            message: 'Server error',
-            error: error.message
-        });
-    }
-});
-
-// =====================================================
 // CORPORATE CONTACTS ROUTES
 // =====================================================
 
-// Get contacts for a corporate
 router.get('/corporates/:id/contacts', async (req, res) => {
     try {
         const { id } = req.params;
+        const { status = 'ACTIVE' } = req.query;
 
-        const { data: contacts, error } = await supabase
+        let query = supabase
             .from('corporate_contacts')
             .select('*')
             .eq('tenant_id', id)
-            .eq('status', 'ACTIVE')
             .order('is_primary', { ascending: false })
-            .order('created_at', { ascending: true });
+            .order('created_at', { ascending: false });
+
+        if (status !== 'ALL') {
+            query = query.eq('status', status);
+        }
+
+        const { data: contacts, error } = await query;
 
         if (error) {
             return res.status(500).json({
@@ -1147,7 +694,6 @@ router.get('/corporates/:id/contacts', async (req, res) => {
     }
 });
 
-// Add contact
 router.post('/corporates/:id/contacts', async (req, res) => {
     try {
         const { id } = req.params;
@@ -1185,20 +731,10 @@ router.post('/corporates/:id/contacts', async (req, res) => {
             });
         }
 
-        // If this is primary, remove primary from others
-        if (contactData.is_primary) {
-            await supabase
-                .from('corporate_contacts')
-                .update({ is_primary: false })
-                .eq('tenant_id', id)
-                .neq('contact_id', contact.contact_id);
-        }
-
-        // Log activity
         await logActivity(
             id,
             'CONTACT_ADDED',
-            `Contact "${contact.full_name}" added`,
+            `Contact "${contactData.full_name}" added`,
             {
                 entity_type: 'CONTACT',
                 entity_id: contact.contact_id,
@@ -1222,7 +758,6 @@ router.post('/corporates/:id/contacts', async (req, res) => {
     }
 });
 
-// Update contact
 router.put('/corporates/:id/contacts/:contactId', async (req, res) => {
     try {
         const { id, contactId } = req.params;
@@ -1260,7 +795,6 @@ router.put('/corporates/:id/contacts/:contactId', async (req, res) => {
     }
 });
 
-// Delete contact
 router.delete('/corporates/:id/contacts/:contactId', async (req, res) => {
     try {
         const { id, contactId } = req.params;
@@ -1298,7 +832,6 @@ router.delete('/corporates/:id/contacts/:contactId', async (req, res) => {
 // CORPORATE NOTES ROUTES
 // =====================================================
 
-// Get notes for a corporate
 router.get('/corporates/:id/notes', async (req, res) => {
     try {
         const { id } = req.params;
@@ -1336,7 +869,6 @@ router.get('/corporates/:id/notes', async (req, res) => {
     }
 });
 
-// Add note
 router.post('/corporates/:id/notes', async (req, res) => {
     try {
         const { id } = req.params;
@@ -1370,7 +902,6 @@ router.post('/corporates/:id/notes', async (req, res) => {
             });
         }
 
-        // Log activity
         await logActivity(
             id,
             'NOTE_ADDED',
