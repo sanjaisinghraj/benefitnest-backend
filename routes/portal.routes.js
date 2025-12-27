@@ -520,46 +520,91 @@ router.get('/portal/config/:subdomain', async (req, res) => {
 // =====================================================
 // UPDATE PORTAL CUSTOMIZATIONS (Protected - Admin only)
 // =====================================================
+// =====================================================
+// UPDATE PORTAL CUSTOMIZATIONS (Protected - Admin only)
+// =====================================================
 router.post('/admin/corporates/:tenantId/customize-portal', async (req, res) => {
     try {
         const { tenantId } = req.params;
         const customizationData = req.body;
         
         console.log(`[PORTAL] Updating customizations for tenant: ${tenantId}`);
+        console.log(`[PORTAL] Data received:`, JSON.stringify(customizationData, null, 2));
+
+        // Define allowed fields that exist in the database
+        const allowedFields = [
+            'primary_color', 'secondary_color', 'accent_color', 'background_color', 
+            'text_color', 'border_color', 'dark_mode_enabled', 'dark_primary_color',
+            'dark_secondary_color', 'dark_background_color', 'dark_text_color',
+            'heading_font_family', 'body_font_family', 'heading_font_size', 
+            'subheading_font_size', 'body_font_size', 'caption_font_size',
+            'font_weight_heading', 'font_weight_body', 'line_height_multiplier', 
+            'letter_spacing', 'logo_url', 'favicon_url', 'logo_position', 
+            'logo_width', 'logo_height', 'logo_show_on_mobile', 
+            'header_background_color', 'header_sticky', 'layout_type',
+            'container_max_width', 'container_padding_x', 'container_padding_y', 
+            'section_gap', 'theme_preset', 'custom_css', 'default_language',
+            'supported_languages', 'language_switcher_enabled', 'language_switcher_position',
+            'default_currency', 'timezone', 'date_format', 'number_format',
+            'show_header', 'show_navigation_menu', 'show_search_bar', 'show_breadcrumbs',
+            'show_hero_section', 'show_benefits_section', 'show_features_section',
+            'show_news_section', 'show_announcements', 'show_contact_section',
+            'show_faq_section', 'show_testimonials', 'show_footer', 'show_footer_links',
+            'show_social_media', 'show_employee_directory', 'show_org_chart',
+            'show_team_members', 'portal_title', 'portal_tagline', 'portal_description',
+            'hero_headline', 'hero_subheadline', 'hero_background_image_url',
+            'hero_cta_button_text', 'hero_cta_button_url', 'custom_sections',
+            'custom_navigation_items', 'footer_links', 'social_media_links',
+            'documents', 'resource_library_enabled', 'media_gallery_enabled',
+            'surveys', 'polls_enabled', 'feedback_form_enabled', 'chat_widget_enabled',
+            'contact_form_enabled', 'employee_directory_enabled', 'show_employee_photos',
+            'show_employee_contact', 'show_department_filter', 'show_search_employees',
+            'benefits_plans_enabled', 'show_benefits_comparison', 'show_enrollment_status',
+            'open_enrollment_message', 'open_enrollment_start_date', 'open_enrollment_end_date',
+            'sso_enabled', 'sso_provider'
+        ];
+
+        // Filter out any fields that are not in the allowed list
+        const filteredData = {};
+        for (const key of allowedFields) {
+            if (customizationData[key] !== undefined) {
+                filteredData[key] = customizationData[key];
+            }
+        }
+
+        console.log(`[PORTAL] Filtered data:`, JSON.stringify(filteredData, null, 2));
 
         // Get existing customization
-        const { data: existingCustom } = await supabase
+        const { data: existingCustom, error: fetchError } = await supabase
             .from('portal_customizations')
             .select('id, version')
             .eq('tenant_id', tenantId)
             .eq('is_active', true)
             .single();
 
+        if (fetchError && fetchError.code !== 'PGRST116') {
+            console.error('[PORTAL] Fetch error:', fetchError);
+        }
+
         let result;
 
         if (existingCustom) {
-            const newVersion = existingCustom.version + 1;
-            
-            // Deactivate old version
-            await supabase
+            // Update existing record
+            const { data: updatedCustom, error: updateError } = await supabase
                 .from('portal_customizations')
-                .update({ is_active: false })
-                .eq('id', existingCustom.id);
-
-            // Create new version
-            const { data: newCustom, error: createError } = await supabase
-                .from('portal_customizations')
-                .insert({
-                    tenant_id: tenantId,
-                    version: newVersion,
-                    is_active: true,
-                    ...customizationData
+                .update({
+                    ...filteredData,
+                    version: existingCustom.version + 1
                 })
+                .eq('id', existingCustom.id)
                 .select()
                 .single();
 
-            if (createError) throw createError;
-            result = newCustom;
+            if (updateError) {
+                console.error('[PORTAL] Update error:', updateError);
+                throw updateError;
+            }
+            result = updatedCustom;
         } else {
             // Create new customization
             const { data: newCustom, error: createError } = await supabase
@@ -568,26 +613,33 @@ router.post('/admin/corporates/:tenantId/customize-portal', async (req, res) => 
                     tenant_id: tenantId,
                     version: 1,
                     is_active: true,
-                    ...customizationData
+                    is_draft: false,
+                    ...filteredData
                 })
                 .select()
                 .single();
 
-            if (createError) throw createError;
+            if (createError) {
+                console.error('[PORTAL] Create error:', createError);
+                throw createError;
+            }
             result = newCustom;
         }
 
+        console.log(`[PORTAL] Customization saved successfully`);
+
         res.json({
             success: true,
-            data: {
-                customization_id: result.id,
-                version: result.version,
-                message: 'Portal customization updated successfully'
-            }
+            data: result,
+            message: 'Portal customization saved successfully'
         });
     } catch (err) {
         console.error('[PORTAL] Customization error:', err);
-        res.status(500).json({ success: false, message: 'Failed to update customization' });
+        res.status(500).json({ 
+            success: false, 
+            message: 'Failed to update customization',
+            error: err.message 
+        });
     }
 });
 
