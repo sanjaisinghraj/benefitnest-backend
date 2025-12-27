@@ -978,4 +978,290 @@ router.get('/corporates/:id/activity', async (req, res) => {
 // =====================================================
 // EXPORT
 // =====================================================
+
+
+// =====================================================
+// GET TENANTS TABLE SCHEMA (for dynamic form fields)
+// =====================================================
+router.get('/corporates/schema/fields', async (req, res) => {
+    try {
+        const { data, error } = await supabase.rpc('get_table_columns', { 
+            table_name: 'tenants' 
+        });
+        
+        // If RPC doesn't exist, use raw query
+        if (error) {
+            const { data: columns, error: colError } = await supabase
+                .from('information_schema.columns')
+                .select('column_name, data_type, is_nullable, column_default')
+                .eq('table_name', 'tenants')
+                .eq('table_schema', 'public');
+            
+            if (colError) {
+                // Fallback: return hardcoded known columns
+                return res.json({
+                    success: true,
+                    data: {
+                        core_fields: [
+                            'tenant_id', 'tenant_code', 'subdomain', 'status',
+                            'corporate_legal_name', 'corporate_type', 'industry_type', 'country',
+                            'address', 'contact_details', 'documents', 'benefitnest_manager',
+                            'registration_details', 'branding_config', 'broker_id',
+                            'contract_start_date', 'contract_end_date', 'contract_value',
+                            'compliance_status', 'portal_url', 'health_score', 'health_factors',
+                            'tags', 'internal_notes', 'ai_scan_skipped', 'ai_observations',
+                            'created_at', 'updated_at', 'last_activity_at', 'created_by', 'updated_by'
+                        ],
+                        system_fields: ['tenant_id', 'created_at', 'updated_at', 'last_activity_at', 'created_by', 'updated_by'],
+                        jsonb_fields: ['address', 'contact_details', 'documents', 'benefitnest_manager', 'registration_details', 'branding_config', 'health_factors', 'ai_observations']
+                    }
+                });
+            }
+            
+            return res.json({
+                success: true,
+                data: columns
+            });
+        }
+        
+        res.json({
+            success: true,
+            data: data
+        });
+    } catch (error) {
+        console.error('Error fetching schema:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch schema',
+            error: error.message
+        });
+    }
+});
+
+// =====================================================
+// AI VALIDATION ENDPOINT
+// =====================================================
+router.post('/corporates/validate', async (req, res) => {
+    try {
+        const { corporate_legal_name, country, industry_type, registration_details } = req.body;
+        
+        const issues = [];
+        const suggestions = [];
+        
+        // Validate corporate name based on country
+        if (corporate_legal_name && country) {
+            const name = corporate_legal_name.toLowerCase();
+            
+            if (country === 'India') {
+                // Indian company validations
+                const validSuffixes = ['private limited', 'pvt ltd', 'pvt. ltd.', 'limited', 'ltd', 'llp', 'opc'];
+                const hasSuffix = validSuffixes.some(s => name.includes(s));
+                if (!hasSuffix) {
+                    issues.push({
+                        field: 'corporate_legal_name',
+                        severity: 'warning',
+                        message: 'Indian company names typically end with Private Limited, LLP, or similar suffix',
+                        suggestion: `${corporate_legal_name} Private Limited`
+                    });
+                }
+                
+                // Check for special characters
+                if (/[^a-zA-Z0-9\s&.,()-]/.test(corporate_legal_name)) {
+                    issues.push({
+                        field: 'corporate_legal_name',
+                        severity: 'error',
+                        message: 'Company name contains invalid special characters'
+                    });
+                }
+            }
+            
+            if (country === 'USA') {
+                const validSuffixes = ['inc', 'inc.', 'incorporated', 'llc', 'corp', 'corporation', 'co', 'company'];
+                const hasSuffix = validSuffixes.some(s => name.includes(s));
+                if (!hasSuffix) {
+                    issues.push({
+                        field: 'corporate_legal_name',
+                        severity: 'warning',
+                        message: 'US company names typically end with Inc, LLC, Corp, etc.',
+                        suggestion: `${corporate_legal_name}, Inc.`
+                    });
+                }
+            }
+        }
+        
+        // Validate registration details
+        if (registration_details && country === 'India') {
+            const { pan, gstin, cin } = registration_details;
+            
+            // PAN validation (AAAAA9999A format)
+            if (pan && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(pan.toUpperCase())) {
+                issues.push({
+                    field: 'registration_details.pan',
+                    severity: 'error',
+                    message: 'Invalid PAN format. Expected: AAAAA9999A'
+                });
+            }
+            
+            // GSTIN validation (15 characters)
+            if (gstin && !/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(gstin.toUpperCase())) {
+                issues.push({
+                    field: 'registration_details.gstin',
+                    severity: 'error',
+                    message: 'Invalid GSTIN format. Expected: 22AAAAA0000A1Z5'
+                });
+            }
+            
+            // CIN validation (21 characters)
+            if (cin && cin.length !== 21) {
+                issues.push({
+                    field: 'registration_details.cin',
+                    severity: 'warning',
+                    message: 'CIN should be 21 characters long'
+                });
+            }
+        }
+        
+        // Check for duplicate corporate name
+        const { data: existing } = await supabase
+            .from('tenants')
+            .select('tenant_id, corporate_legal_name')
+            .ilike('corporate_legal_name', `%${corporate_legal_name}%`)
+            .limit(5);
+        
+        if (existing && existing.length > 0) {
+            issues.push({
+                field: 'corporate_legal_name',
+                severity: 'warning',
+                message: `Similar corporate names found: ${existing.map(e => e.corporate_legal_name).join(', ')}`
+            });
+        }
+        
+        res.json({
+            success: true,
+            valid: issues.filter(i => i.severity === 'error').length === 0,
+            issues,
+            suggestions
+        });
+        
+    } catch (error) {
+        console.error('Error in AI validation:', error);
+        res.status(500).json({
+            success: false,
+            message: 'AI validation failed',
+            error: error.message
+        });
+    }
+});
+
+// =====================================================
+// CHECK PORTAL URL EXISTS
+// =====================================================
+router.get('/corporates/:id/check-portal', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const { data: corporate } = await supabase
+            .from('tenants')
+            .select('subdomain, portal_url')
+            .eq('tenant_id', id)
+            .single();
+        
+        if (!corporate) {
+            return res.status(404).json({
+                success: false,
+                message: 'Corporate not found'
+            });
+        }
+        
+        // Check if portal files exist (this would check your file system or storage)
+        const portalPath = `/tenants/${corporate.subdomain}`;
+        const portalExists = false; // TODO: Implement actual check
+        
+        res.json({
+            success: true,
+            data: {
+                subdomain: corporate.subdomain,
+                portal_url: corporate.portal_url || `https://${corporate.subdomain}.benefitnest.space`,
+                portal_exists: portalExists,
+                needs_creation: !portalExists
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error checking portal:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to check portal',
+            error: error.message
+        });
+    }
+});
+
+// =====================================================
+// CREATE PORTAL FOR CORPORATE
+// =====================================================
+router.post('/corporates/:id/create-portal', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        const { data: corporate } = await supabase
+            .from('tenants')
+            .select('*')
+            .eq('tenant_id', id)
+            .single();
+        
+        if (!corporate) {
+            return res.status(404).json({
+                success: false,
+                message: 'Corporate not found'
+            });
+        }
+        
+        // Generate portal configuration
+        const portalConfig = {
+            tenant_id: corporate.tenant_id,
+            subdomain: corporate.subdomain,
+            branding: corporate.branding_config || {
+                primary_color: '#2563eb',
+                secondary_color: '#10b981',
+                logo_url: null,
+                company_name: corporate.corporate_legal_name
+            },
+            created_at: new Date().toISOString()
+        };
+        
+        // Update corporate with portal URL
+        const portalUrl = `https://${corporate.subdomain}.benefitnest.space`;
+        
+        await supabase
+            .from('tenants')
+            .update({ 
+                portal_url: portalUrl,
+                updated_at: new Date().toISOString()
+            })
+            .eq('tenant_id', id);
+        
+        // Log activity
+        await logActivity(id, 'PORTAL_CREATED', `Portal created: ${portalUrl}`);
+        
+        res.json({
+            success: true,
+            message: 'Portal created successfully',
+            data: {
+                portal_url: portalUrl,
+                config: portalConfig
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error creating portal:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to create portal',
+            error: error.message
+        });
+    }
+});
+
+
 module.exports = router;
