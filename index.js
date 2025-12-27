@@ -63,7 +63,7 @@ require("./db");
 /* =========================
    ROUTES
 ========================= */
-const portalRoutes = require('./portal.routes');
+const portalRoutes = require('./routes/portal.routes');
 app.use('/api', portalRoutes);
 const adminSchemaRoutes = require('./routes/admin.schema.routes');
 app.use('/api/admin/schema', adminSchemaRoutes);
