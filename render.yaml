@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: benefitnest-backend
+    runtime: node
+    region: oregon
+    buildCommand: cd backend-nestjs && npm install && npm run build
+    startCommand: cd backend-nestjs && npm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
